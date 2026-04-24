@@ -12,6 +12,9 @@ import ResetPassword from "./pages/ResetPassword";
 import Dashboard from "./pages/Dashboard";
 import ControleCompetencia from "./pages/ControleCompetencia";
 import Empresas from "./pages/Empresas";
+import Cadastro from "./pages/Cadastro";
+import Credenciadas from "./pages/Credenciadas";
+import Treinamentos from "./pages/Treinamentos";
 import Importacao from "./pages/Importacao";
 import Faturamento from "./pages/Faturamento";
 import Configuracoes from "./pages/Configuracoes";
@@ -35,6 +38,11 @@ const App = () => (
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/competencia/:id" element={<ControleCompetencia />} />
                 <Route path="/empresas" element={<Empresas />} />
+                <Route path="/cadastro" element={<Cadastro />} />
+                <Route path="/cadastro/empresas" element={<Cadastro />} />
+                <Route path="/cadastro/credenciadas" element={<Cadastro />} />
+                <Route path="/credenciadas" element={<Credenciadas />} />
+                <Route path="/treinamentos" element={<Treinamentos />} />
                 <Route path="/importacao" element={<Importacao />} />
                 <Route path="/faturamento" element={<Faturamento />} />
                 <Route path="/configuracoes" element={<Configuracoes />} />

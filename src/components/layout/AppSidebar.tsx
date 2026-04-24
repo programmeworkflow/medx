@@ -1,16 +1,17 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Building2, FileSpreadsheet, Receipt, Settings, LogOut, Upload } from "lucide-react";
+import { LayoutDashboard, Building2, FileSpreadsheet, Receipt, Settings, LogOut, Upload, GraduationCap } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import logo from "@/assets/logo-medx.png";
 import { cn } from "@/lib/utils";
 
 const links = [
-  { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
-  { to: "/empresas", icon: Building2, label: "Empresas" },
-  { to: "/importacao", icon: Upload, label: "Importação ESO" },
-  { to: "/faturamento", icon: Receipt, label: "Faturamento" },
-  { to: "/configuracoes", icon: Settings, label: "Configurações" },
+  { to: "/dashboard",    icon: LayoutDashboard, label: "Dashboard" },
+  { to: "/cadastro",     icon: Building2,       label: "Cadastro" },
+  { to: "/treinamentos", icon: GraduationCap,   label: "Treinamentos" },
+  { to: "/importacao",   icon: Upload,          label: "Importação ESO" },
+  { to: "/faturamento",  icon: Receipt,         label: "Faturamento" },
+  { to: "/configuracoes",icon: Settings,        label: "Configurações" },
 ];
 
 export default function AppSidebar() {

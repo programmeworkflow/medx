@@ -8,10 +8,21 @@ export type CompetenciaInsert = Database["public"]["Tables"]["competencias"]["In
 export type Faturamento = Database["public"]["Tables"]["faturamentos"]["Row"];
 export type FaturamentoInsert = Database["public"]["Tables"]["faturamentos"]["Insert"];
 
+export type Credenciada = Database["public"]["Tables"]["credenciadas"]["Row"];
+export type CredenciadaInsert = Database["public"]["Tables"]["credenciadas"]["Insert"];
+export type CredenciadaUpdate = Database["public"]["Tables"]["credenciadas"]["Update"];
+
+export type Treinamento = Database["public"]["Tables"]["treinamentos"]["Row"];
+export type TreinamentoInsert = Database["public"]["Tables"]["treinamentos"]["Insert"];
+export type TreinamentoUpdate = Database["public"]["Tables"]["treinamentos"]["Update"];
+
 export type Categoria = Database["public"]["Enums"]["categoria_empresa"];
 export type TipoFaturamento = Database["public"]["Enums"]["tipo_faturamento"];
 export type StatusFaturamento = Database["public"]["Enums"]["status_faturamento"];
 export type StatusCompetencia = Database["public"]["Enums"]["status_competencia"];
+export type ModalidadeTreinamento = Database["public"]["Enums"]["modalidade_treinamento"];
+
+export const COMISSAO_TREINAMENTO = 0.07; // 7% fixo
 
 export const CATEGORIA_LABELS: Record<Categoria, string> = {
   medwork: "MedWork",
@@ -113,5 +124,107 @@ export type FaturamentoUpdate = Database["public"]["Tables"]["faturamentos"]["Up
 
 export async function updateFaturamento(id: string, updates: FaturamentoUpdate) {
   const { error } = await supabase.from("faturamentos").update(updates).eq("id", id);
+  if (error) throw error;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Credenciadas
+// ─────────────────────────────────────────────────────────────────────
+export async function fetchCredenciadas() {
+  const { data, error } = await supabase.from("credenciadas").select("*").order("nome");
+  if (error) throw error;
+  return data;
+}
+
+export async function insertCredenciada(cred: CredenciadaInsert) {
+  const { data, error } = await supabase.from("credenciadas").insert(cred).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateCredenciada(id: string, updates: CredenciadaUpdate) {
+  const { error } = await supabase.from("credenciadas").update(updates).eq("id", id);
+  if (error) throw error;
+}
+
+export async function deleteCredenciada(id: string) {
+  const { error } = await supabase.from("credenciadas").delete().eq("id", id);
+  if (error) throw error;
+}
+
+/** Upload a file to a storage bucket and return the stored path. */
+export async function uploadCredenciadaFile(
+  bucket: "contratos-credenciadas" | "tabelas-preco",
+  credenciadaId: string,
+  file: File
+): Promise<string> {
+  const ext = file.name.split(".").pop() || "bin";
+  const path = `${credenciadaId}/${Date.now()}.${ext}`;
+  const { error } = await supabase.storage.from(bucket).upload(path, file, {
+    upsert: true,
+    cacheControl: "3600",
+  });
+  if (error) throw error;
+  return path;
+}
+
+/** Get a signed URL to view a file from a private bucket. */
+export async function getCredenciadaFileUrl(
+  bucket: "contratos-credenciadas" | "tabelas-preco",
+  path: string
+): Promise<string> {
+  const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 3600);
+  if (error) throw error;
+  return data.signedUrl;
+}
+
+/**
+ * Categoriza o tempo de contrato de uma credenciada em relação a HOJE:
+ *  - "reajuste_proximo": <= 30 dias pra completar 1 ano
+ *  - "atrasado_1ano":    passou 1 ano e ainda <2 anos (precisa reajuste)
+ *  - "atrasado_2anos":   >=2 anos sem atualizar
+ *  - null:               sem data_contrato ou dentro do primeiro ano
+ */
+export function classificaReajusteCredenciada(data_contrato: string | null):
+  | "reajuste_proximo"
+  | "atrasado_1ano"
+  | "atrasado_2anos"
+  | null {
+  if (!data_contrato) return null;
+  const d = new Date(data_contrato);
+  const hoje = new Date();
+  const diffDias = Math.floor((hoje.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
+  const diasPrimeiroAniv = 365 - diffDias;
+  if (diffDias >= 730) return "atrasado_2anos";
+  if (diffDias >= 365) return "atrasado_1ano";
+  if (diasPrimeiroAniv >= 0 && diasPrimeiroAniv <= 30) return "reajuste_proximo";
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Treinamentos
+// ─────────────────────────────────────────────────────────────────────
+export async function fetchTreinamentos() {
+  const { data, error } = await supabase
+    .from("treinamentos")
+    .select("*, empresa:empresas!treinamentos_empresa_id_fkey(id, nome_empresa, cnpj)")
+    .order("data_treinamento", { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+export async function insertTreinamento(t: TreinamentoInsert) {
+  const { data, error } = await supabase.from("treinamentos").insert(t).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateTreinamento(id: string, updates: TreinamentoUpdate) {
+  const { error } = await supabase.from("treinamentos").update(updates).eq("id", id);
+  if (error) throw error;
+}
+
+export async function deleteTreinamento(id: string) {
+  const { error } = await supabase.from("treinamentos").delete().eq("id", id);
   if (error) throw error;
 }

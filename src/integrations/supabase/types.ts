@@ -49,6 +49,10 @@ export type Database = {
           nome_empresa: string
           observacoes: string | null
           tipo_faturamento: Database["public"]["Enums"]["tipo_faturamento"]
+          vidas_contrato: number | null
+          vidas_eso: number | null
+          data_fechamento_especial: string | null
+          janela_fechamento: string | null
         }
         Insert: {
           ativa?: boolean
@@ -60,6 +64,10 @@ export type Database = {
           nome_empresa: string
           observacoes?: string | null
           tipo_faturamento?: Database["public"]["Enums"]["tipo_faturamento"]
+          vidas_contrato?: number | null
+          vidas_eso?: number | null
+          data_fechamento_especial?: string | null
+          janela_fechamento?: string | null
         }
         Update: {
           ativa?: boolean
@@ -71,11 +79,117 @@ export type Database = {
           nome_empresa?: string
           observacoes?: string | null
           tipo_faturamento?: Database["public"]["Enums"]["tipo_faturamento"]
+          vidas_contrato?: number | null
+          vidas_eso?: number | null
+          data_fechamento_especial?: string | null
+          janela_fechamento?: string | null
         }
         Relationships: [
           {
             foreignKeyName: "empresas_empresa_faturadora_id_fkey"
             columns: ["empresa_faturadora_id"]
+            isOneToOne: false
+            referencedRelation: "empresas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      credenciadas: {
+        Row: {
+          id: string
+          nome: string
+          cnpj: string
+          possui_contrato: boolean
+          data_contrato: string | null
+          email_faturamento: string | null
+          envia_correios: boolean
+          endereco_despacho: string | null
+          cep: string | null
+          tabela_preco_url: string | null
+          contrato_url: string | null
+          observacoes: string | null
+          ativa: boolean
+          criado_em: string
+          atualizado_em: string
+        }
+        Insert: {
+          id?: string
+          nome: string
+          cnpj: string
+          possui_contrato?: boolean
+          data_contrato?: string | null
+          email_faturamento?: string | null
+          envia_correios?: boolean
+          endereco_despacho?: string | null
+          cep?: string | null
+          tabela_preco_url?: string | null
+          contrato_url?: string | null
+          observacoes?: string | null
+          ativa?: boolean
+          criado_em?: string
+          atualizado_em?: string
+        }
+        Update: {
+          id?: string
+          nome?: string
+          cnpj?: string
+          possui_contrato?: boolean
+          data_contrato?: string | null
+          email_faturamento?: string | null
+          envia_correios?: boolean
+          endereco_despacho?: string | null
+          cep?: string | null
+          tabela_preco_url?: string | null
+          contrato_url?: string | null
+          observacoes?: string | null
+          ativa?: boolean
+          criado_em?: string
+          atualizado_em?: string
+        }
+        Relationships: []
+      }
+      treinamentos: {
+        Row: {
+          id: string
+          empresa_id: string | null
+          nome: string
+          modalidade: Database["public"]["Enums"]["modalidade_treinamento"]
+          diaria_instrutor: number | null
+          valor_bruto: number
+          valor_comissao: number
+          data_treinamento: string
+          data_pagamento: string | null
+          observacoes: string | null
+          criado_em: string
+        }
+        Insert: {
+          id?: string
+          empresa_id?: string | null
+          nome: string
+          modalidade?: Database["public"]["Enums"]["modalidade_treinamento"]
+          diaria_instrutor?: number | null
+          valor_bruto?: number
+          data_treinamento: string
+          data_pagamento?: string | null
+          observacoes?: string | null
+          criado_em?: string
+        }
+        Update: {
+          id?: string
+          empresa_id?: string | null
+          nome?: string
+          modalidade?: Database["public"]["Enums"]["modalidade_treinamento"]
+          diaria_instrutor?: number | null
+          valor_bruto?: number
+          data_treinamento?: string
+          data_pagamento?: string | null
+          observacoes?: string | null
+          criado_em?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "treinamentos_empresa_id_fkey"
+            columns: ["empresa_id"]
             isOneToOne: false
             referencedRelation: "empresas"
             referencedColumns: ["id"]
@@ -191,6 +305,7 @@ export type Database = {
         | "credenciada"
         | "mensalidade"
         | "labore"
+      modalidade_treinamento: "presencial" | "ead"
       status_competencia: "aberto" | "concluido"
       status_faturamento:
         | "pendente"

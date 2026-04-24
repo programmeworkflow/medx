@@ -61,6 +61,10 @@ export default function Empresas() {
   const [fatId, setFatId] = useState("");
   const [obs, setObs] = useState("");
   const [ativa, setAtiva] = useState(true);
+  const [vidasContrato, setVidasContrato] = useState<string>("");
+  const [vidasEso, setVidasEso] = useState<string>("");
+  const [dataFechamentoEspecial, setDataFechamentoEspecial] = useState<string>("");
+  const [janelaFechamento, setJanelaFechamento] = useState("");
 
   const { data: empresas = [], isLoading } = useQuery({
     queryKey: ["empresas"],
@@ -103,6 +107,7 @@ export default function Empresas() {
 
   const resetForm = () => {
     setNome(""); setCnpj(""); setObs(""); setCategoria("medwork"); setTipo("propria_empresa"); setFatId(""); setAtiva(true);
+    setVidasContrato(""); setVidasEso(""); setDataFechamentoEspecial(""); setJanelaFechamento("");
   };
 
   const openEdit = (e: Empresa) => {
@@ -114,6 +119,10 @@ export default function Empresas() {
     setFatId(e.empresa_faturadora_id || "");
     setObs(e.observacoes || "");
     setAtiva(e.ativa);
+    setVidasContrato(e.vidas_contrato != null ? String(e.vidas_contrato) : "");
+    setVidasEso(e.vidas_eso != null ? String(e.vidas_eso) : "");
+    setDataFechamentoEspecial(e.data_fechamento_especial || "");
+    setJanelaFechamento(e.janela_fechamento || "");
     setOpen(true);
   };
 
@@ -145,6 +154,10 @@ export default function Empresas() {
       empresa_faturadora_id: tipo === "outra_empresa" ? fatId || undefined : null,
       observacoes: obs || null,
       ativa,
+      vidas_contrato: vidasContrato ? parseInt(vidasContrato, 10) : null,
+      vidas_eso: vidasEso ? parseInt(vidasEso, 10) : null,
+      data_fechamento_especial: dataFechamentoEspecial || null,
+      janela_fechamento: janelaFechamento || null,
     };
 
     if (editingId) {
@@ -184,10 +197,13 @@ export default function Empresas() {
   const handleDownloadTemplate = () => {
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet([
-      ["Empresa", "CNPJ", "Categoria"],
-      ["Exemplo Empresa LTDA", "12.345.678/0001-01", "medwork"],
+      ["Empresa", "CNPJ", "Categoria", "Vidas Contrato", "Vidas ESO", "Janela Fechamento", "Data Fechamento Especial", "Observacoes"],
+      ["Exemplo Empresa LTDA", "12.345.678/0001-01", "medwork", 50, 48, "do dia 20 ao dia 20", "", "faturar com nota dedicada"],
     ]);
-    ws["!cols"] = [{ wch: 30 }, { wch: 22 }, { wch: 18 }];
+    ws["!cols"] = [
+      { wch: 30 }, { wch: 22 }, { wch: 18 },
+      { wch: 15 }, { wch: 12 }, { wch: 25 }, { wch: 22 }, { wch: 40 },
+    ];
     XLSX.utils.book_append_sheet(wb, ws, "Empresas");
     XLSX.writeFile(wb, "modelo_cadastro_empresas.xlsx");
   };
@@ -207,13 +223,41 @@ export default function Empresas() {
       rows.forEach((row, idx) => {
         const nome = row["Empresa"] || row["empresa"] || row["Nome"] || row["nome_empresa"];
         const cnpj = row["CNPJ"] || row["cnpj"];
-        const cat = row["Categoria"] || row["categoria"];
+        const cat  = row["Categoria"] || row["categoria"];
+        const vc   = row["Vidas Contrato"] || row["vidas_contrato"];
+        const ve   = row["Vidas ESO"]     || row["vidas_eso"];
+        const jf   = row["Janela Fechamento"] || row["janela_fechamento"];
+        const dfe  = row["Data Fechamento Especial"] || row["data_fechamento_especial"];
+        const obsv = row["Observacoes"] || row["observacoes"];
         if (!nome || !cnpj) { errors.push(`Linha ${idx + 2}: Nome ou CNPJ vazio`); return; }
         if (existingCnpjs.has(cnpj)) { errors.push(`Linha ${idx + 2}: CNPJ ${cnpj} já cadastrado`); return; }
         const validCat = categorias.includes(cat as Categoria) ? (cat as Categoria) : undefined;
         if (cat && !validCat) errors.push(`Linha ${idx + 2}: Categoria "${cat}" inválida — será ignorada`);
+        const toIntOrNull = (v: any) => {
+          const n = parseInt(String(v ?? "").replace(/\D/g, ""), 10);
+          return isFinite(n) && n > 0 ? n : null;
+        };
+        const toDateOrNull = (v: any) => {
+          if (!v) return null;
+          // Accept "YYYY-MM-DD" or Excel serial
+          if (v instanceof Date) return v.toISOString().slice(0, 10);
+          const s = String(v);
+          if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+          return null;
+        };
         existingCnpjs.add(cnpj);
-        validEmpresas.push({ nome_empresa: nome, cnpj, categoria: validCat || "medwork", tipo_faturamento: "propria_empresa", ativa: true });
+        validEmpresas.push({
+          nome_empresa: nome,
+          cnpj,
+          categoria: validCat || "medwork",
+          tipo_faturamento: "propria_empresa",
+          ativa: true,
+          vidas_contrato: toIntOrNull(vc),
+          vidas_eso: toIntOrNull(ve),
+          janela_fechamento: jf ? String(jf) : null,
+          data_fechamento_especial: toDateOrNull(dfe),
+          observacoes: obsv ? String(obsv) : null,
+        });
       });
       if (validEmpresas.length > 0) {
         await insertEmpresasBulk(validEmpresas);
@@ -337,6 +381,46 @@ export default function Empresas() {
                     </Select>
                   </div>
                 )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Vidas inclusas no Contrato</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={vidasContrato}
+                      onChange={(e) => setVidasContrato(e.target.value)}
+                      placeholder="Ex: 50"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Vidas no ESO</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={vidasEso}
+                      onChange={(e) => setVidasEso(e.target.value)}
+                      placeholder="Ex: 48"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Data especial de fechamento</Label>
+                    <Input
+                      type="date"
+                      value={dataFechamentoEspecial}
+                      onChange={(e) => setDataFechamentoEspecial(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Janela de fechamento</Label>
+                    <Input
+                      value={janelaFechamento}
+                      onChange={(e) => setJanelaFechamento(e.target.value)}
+                      placeholder='Ex: "do dia 20 ao dia 20"'
+                    />
+                  </div>
+                </div>
                 <div className="space-y-2">
                   <Label>Observações</Label>
                   <Textarea value={obs} onChange={(e) => setObs(e.target.value)} />
@@ -493,6 +577,12 @@ export default function Empresas() {
                 <div><span className="text-muted-foreground">Faturamento:</span><p>{selectedEmpresa.tipo_faturamento === "outra_empresa" ? `→ ${empresas.find(x => x.id === selectedEmpresa.empresa_faturadora_id)?.nome_empresa || "—"}` : "Própria Empresa"}</p></div>
                 <div><span className="text-muted-foreground">Status:</span><p><Badge variant={selectedEmpresa.ativa ? "default" : "destructive"}>{selectedEmpresa.ativa ? "Ativa" : "Inativa"}</Badge></p></div>
                 <div><span className="text-muted-foreground">Cadastro:</span><p>{new Date(selectedEmpresa.criado_em).toLocaleDateString("pt-BR")}</p></div>
+                <div><span className="text-muted-foreground">Vidas Contrato:</span><p>{selectedEmpresa.vidas_contrato ?? "—"}</p></div>
+                <div><span className="text-muted-foreground">Vidas ESO:</span><p>{selectedEmpresa.vidas_eso ?? "—"}</p></div>
+                <div className="col-span-2"><span className="text-muted-foreground">Janela de fechamento:</span><p>{selectedEmpresa.janela_fechamento || "—"}</p></div>
+                {selectedEmpresa.data_fechamento_especial && (
+                  <div className="col-span-2"><span className="text-muted-foreground">Data especial de fechamento:</span><p>{new Date(selectedEmpresa.data_fechamento_especial).toLocaleDateString("pt-BR")}</p></div>
+                )}
               </div>
               {selectedEmpresa.observacoes && (
                 <div className="pt-2 border-t border-border">
