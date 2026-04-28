@@ -386,7 +386,75 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      // 7. Salva referência local
+      // 7. Emite boleto via BFF se solicitado
+      let boletoStatus = "nao_solicitado";
+      let boletoErro: string | null = null;
+      let boletoUrl: string | null = null;
+      let boletoLinhaDigitavel: string | null = null;
+
+      if (body.emitir_boleto && vendaId) {
+        try {
+          const info = await caBffSession(
+            "GET",
+            `https://services.contaazul.com/contaazul-bff/sale/v1/sales/${vendaId}`
+          );
+          if (!info.ok) {
+            throw new Error(`lookup BFF ${info.status}: ${info.text?.slice(0, 150)}`);
+          }
+          const sale: any = info.data || {};
+          const installments: any[] =
+            sale.installments || sale.parcelas || sale.paymentCondition?.installments || [];
+          if (!installments.length) {
+            throw new Error("venda sem installments");
+          }
+          const saleNumber = sale.number || sale.numero || sale.saleNumber || "?";
+          const financialAccountId =
+            process.env.CONTA_AZUL_FINANCIAL_ACCOUNT_ID ||
+            "49e2c1f3-c117-4882-82d0-e9ae9795f882";
+          const installmentGroups = installments.map((inst: any, idx: number) => ({
+            description: `Venda ${saleNumber} - ${idx + 1}/${installments.length}`,
+            dueDate: inst.dueDate || inst.data_vencimento || inst.due_date,
+            index: idx + 1,
+            installmentIds: [{ id: inst.id, version: inst.version ?? 0 }],
+            originalDescription: `Venda ${saleNumber}`,
+            value: inst.value ?? inst.amount ?? inst.valor,
+          }));
+          const r = await caBffSession(
+            "POST",
+            "https://services.contaazul.com/finance-pro/v2/charge-requests/batch-create",
+            {
+              financialAccountId,
+              customAttributes: { charge: { type: "INVOICE" } },
+              installmentGroups,
+              type: "RECEBA_FACIL_BANK_SLIP",
+            }
+          );
+          if (!r.ok) {
+            throw new Error(`batch-create ${r.status}: ${r.text?.slice(0, 200)}`);
+          }
+          boletoStatus = "solicitado";
+          const d: any = r.data || {};
+          const first =
+            (Array.isArray(d) ? d[0] : null) ||
+            d?.charges?.[0] ||
+            d?.chargeRequests?.[0] ||
+            d?.items?.[0] ||
+            d;
+          boletoUrl =
+            first?.url || first?.bankSlipUrl || first?.bank_slip_url || first?.boleto_url || null;
+          boletoLinhaDigitavel =
+            first?.barcode ||
+            first?.digitableLine ||
+            first?.linha_digitavel ||
+            first?.typeableLine ||
+            null;
+        } catch (err: any) {
+          boletoStatus = "erro";
+          boletoErro = err?.message || "erro desconhecido";
+        }
+      }
+
+      // 8. Salva referência local
       const sb = supaAdmin();
       await sb.from("contaazul_vendas").insert({
         ca_venda_id: vendaId,
@@ -399,6 +467,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         nf_status: nfStatus,
         nf_erro: nfErro,
         nf_numero: nfNumero,
+        boleto_status: boletoStatus,
+        boleto_erro: boletoErro,
+        boleto_url: boletoUrl,
+        boleto_linha_digitavel: boletoLinhaDigitavel,
         raw: { venda, nf_invoice_legacy_id: nfInvoiceLegacyId },
       });
 
@@ -407,6 +479,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         venda,
         pessoa: { id: personId, cnpj: cnpjDigits },
         nf: { status: nfStatus, erro: nfErro, numero: nfNumero, invoice_legacy_id: nfInvoiceLegacyId },
+        boleto: {
+          status: boletoStatus,
+          erro: boletoErro,
+          url: boletoUrl,
+          linha_digitavel: boletoLinhaDigitavel,
+        },
       });
     }
 
@@ -565,6 +643,116 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         nf_erro: nfErro,
         transmit_http: tr.status,
         detail,
+      });
+    }
+
+    if (action === "emit-boleto") {
+      // Emissão de boleto via BFF interno — POST /finance-pro/v2/charge-requests/batch-create
+      // Auth via cookie x-ca-auth (set-bff-cookies). Conta financeira é a Receba Fácil.
+      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+      const { venda_id, sale_id } = (req.body || {}) as {
+        venda_id?: string;
+        sale_id?: string;
+      };
+      const saleId = sale_id || venda_id;
+      if (!saleId) return res.status(400).json({ error: "venda_id obrigatório" });
+
+      // 1. Busca venda no BFF — precisamos do número, parcelas (id+version+vencimento+valor)
+      const info = await caBffSession(
+        "GET",
+        `https://services.contaazul.com/contaazul-bff/sale/v1/sales/${saleId}`
+      );
+      if (!info.ok) {
+        return res.status(200).json({ ok: false, step: "lookup-sale", status: info.status, text: info.text });
+      }
+      const sale: any = info.data || {};
+      const installments: any[] =
+        sale.installments || sale.parcelas || sale.paymentCondition?.installments || [];
+      if (!installments.length) {
+        return res.status(200).json({
+          ok: false,
+          step: "lookup-sale",
+          error: "venda sem installments na resposta BFF",
+          sample_keys: Object.keys(sale),
+        });
+      }
+      const saleNumber = sale.number || sale.numero || sale.saleNumber || "?";
+
+      const financialAccountId =
+        process.env.CONTA_AZUL_FINANCIAL_ACCOUNT_ID ||
+        "49e2c1f3-c117-4882-82d0-e9ae9795f882";
+
+      const installmentGroups = installments.map((inst: any, idx: number) => ({
+        description: `Venda ${saleNumber} - ${idx + 1}/${installments.length}`,
+        dueDate: inst.dueDate || inst.data_vencimento || inst.due_date,
+        index: idx + 1,
+        installmentIds: [{ id: inst.id, version: inst.version ?? 0 }],
+        originalDescription: `Venda ${saleNumber}`,
+        value: inst.value ?? inst.amount ?? inst.valor,
+      }));
+
+      const payload = {
+        financialAccountId,
+        customAttributes: { charge: { type: "INVOICE" } },
+        installmentGroups,
+        type: "RECEBA_FACIL_BANK_SLIP",
+      };
+
+      const r = await caBffSession(
+        "POST",
+        "https://services.contaazul.com/finance-pro/v2/charge-requests/batch-create",
+        payload
+      );
+
+      let boletoStatus = "erro";
+      let boletoErro: string | null = null;
+      let boletoUrl: string | null = null;
+      let boletoLinhaDigitavel: string | null = null;
+
+      if (r.ok) {
+        boletoStatus = "solicitado";
+        const d: any = r.data || {};
+        const first =
+          (Array.isArray(d) ? d[0] : null) ||
+          d?.charges?.[0] ||
+          d?.chargeRequests?.[0] ||
+          d?.items?.[0] ||
+          d;
+        boletoUrl =
+          first?.url ||
+          first?.bankSlipUrl ||
+          first?.bank_slip_url ||
+          first?.boleto_url ||
+          null;
+        boletoLinhaDigitavel =
+          first?.barcode ||
+          first?.digitableLine ||
+          first?.linha_digitavel ||
+          first?.typeableLine ||
+          null;
+      } else {
+        boletoErro = `${r.status}: ${r.text?.slice(0, 200)}`;
+      }
+
+      const sb = supaAdmin();
+      await sb
+        .from("contaazul_vendas")
+        .update({
+          boleto_status: boletoStatus,
+          boleto_erro: boletoErro,
+          boleto_url: boletoUrl,
+          boleto_linha_digitavel: boletoLinhaDigitavel,
+        })
+        .eq("ca_venda_id", saleId);
+
+      return res.status(200).json({
+        ok: r.ok,
+        status: boletoStatus,
+        erro: boletoErro,
+        url: boletoUrl,
+        linha_digitavel: boletoLinhaDigitavel,
+        payload_enviado: payload,
+        raw: r.data,
       });
     }
 
