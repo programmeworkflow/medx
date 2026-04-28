@@ -56,9 +56,15 @@ export default function ContaAzulPanel() {
   // form fields
   const [empresaId, setEmpresaId] = useState<string>("");
   const [centroCustoId, setCentroCustoId] = useState<string>("");
-  const [servico, setServico] = useState("");
+  const [servicoId, setServicoId] = useState<string>("");
   const [valor, setValor] = useState("");
   const [dataVenda, setDataVenda] = useState(new Date().toISOString().slice(0, 10));
+  // Mês de referência (default: mês anterior)
+  const hoje = new Date();
+  const mesAnterior = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1);
+  const [mesRef, setMesRef] = useState<number>(mesAnterior.getMonth() + 1);
+  const [anoRef, setAnoRef] = useState<number>(mesAnterior.getFullYear());
+  const [obsModo, setObsModo] = useState<"auto" | "manual">("auto");
   const [obs, setObs] = useState("");
   const [emitirNF, setEmitirNF] = useState(false);
   const [emitirBoleto, setEmitirBoleto] = useState(false);
@@ -73,6 +79,27 @@ export default function ContaAzulPanel() {
     },
     enabled: !!status?.connected,
   });
+  const { data: servicos = [] } = useQuery({
+    queryKey: ["ca-servicos"],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE}/api/contaazul/services`);
+      const j = await r.json();
+      return (j?.items as { id: string; nome: string; valor?: number }[]) || [];
+    },
+    enabled: !!status?.connected,
+  });
+
+  const MESES = [
+    "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+  ];
+  const servicoSelecionado = servicos.find((s) => s.id === servicoId);
+  const observacaoAutomatica = (() => {
+    const nome = servicoSelecionado?.nome || "—";
+    const v = Number(valor.replace(",", ".") || 0);
+    const valorFmt = v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return `Referente ao(s) ${nome} do mês de ${MESES[mesRef - 1]}/${anoRef}\nValor total: R$ ${valorFmt}`;
+  })();
 
   const loadStatus = async () => {
     try {
@@ -179,8 +206,9 @@ export default function ContaAzulPanel() {
     const empresa = empresas.find((e) => e.id === empresaId);
     if (!empresa) return toast.error("Selecione uma empresa");
     if (!centroCustoId) return toast.error("Selecione o centro de custo");
-    if (!servico) return toast.error("Informe a descrição");
+    if (!servicoId) return toast.error("Selecione o serviço");
     if (!valor) return toast.error("Informe o valor");
+    const observacaoFinal = obsModo === "auto" ? observacaoAutomatica : obs;
     setSubmitting(true);
     try {
       const r = await fetch(`${API_BASE}/api/contaazul/create-receivable`, {
@@ -190,10 +218,13 @@ export default function ContaAzulPanel() {
           cnpj: empresa.cnpj,
           razao_social: empresa.nome_empresa,
           centro_custo_id: centroCustoId,
-          servico,
+          servico_id: servicoId,
+          servico: servicoSelecionado?.nome || "Serviço",
           valor: Number(valor.replace(",", ".")),
           data_venda: dataVenda,
-          observacoes: obs,
+          observacoes: observacaoFinal,
+          mes_referencia: mesRef,
+          ano_referencia: anoRef,
           emitir_nf: emitirNF,
           emitir_boleto: emitirBoleto,
         }),
@@ -208,7 +239,7 @@ export default function ContaAzulPanel() {
       else if (j?.boleto?.status === "erro") partes.push(`boleto erro: ${j.boleto.erro || "?"}`);
       toast.success(partes.join(" — "));
       setOpen(false);
-      setServico(""); setValor(""); setObs(""); setEmitirNF(false); setEmitirBoleto(false); setCentroCustoId("");
+      setServicoId(""); setValor(""); setObs(""); setEmitirNF(false); setEmitirBoleto(false); setCentroCustoId("");
     } catch (e: any) {
       toast.error(`${e?.message}`);
     } finally {
@@ -382,14 +413,21 @@ export default function ContaAzulPanel() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Descrição</Label>
-                  <Input
-                    value={servico}
-                    onChange={(e) => setServico(e.target.value)}
-                    placeholder="Ex: Referente aos exames do mês de abril/2026"
-                  />
+                  <Label>Serviço</Label>
+                  <Select value={servicoId} onValueChange={setServicoId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={servicos.length ? "Selecionar..." : "Carregando..."} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {servicos.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          {s.nome}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-3">
                   <div className="space-y-2">
                     <Label>Valor (R$)</Label>
                     <Input
@@ -401,17 +439,76 @@ export default function ContaAzulPanel() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Data da venda</Label>
-                    <Input
-                      type="date"
-                      value={dataVenda}
-                      onChange={(e) => setDataVenda(e.target.value)}
-                    />
+                    <Label>Mês de referência</Label>
+                    <Select
+                      value={String(mesRef)}
+                      onValueChange={(v) => setMesRef(Number(v))}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {MESES.map((m, i) => (
+                          <SelectItem key={i + 1} value={String(i + 1)}>
+                            {m}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Ano</Label>
+                    <Select
+                      value={String(anoRef)}
+                      onValueChange={(v) => setAnoRef(Number(v))}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {[hoje.getFullYear() - 1, hoje.getFullYear(), hoje.getFullYear() + 1].map((a) => (
+                          <SelectItem key={a} value={String(a)}>{a}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>Observações</Label>
-                  <Textarea value={obs} onChange={(e) => setObs(e.target.value)} />
+                  <Label>Data da venda</Label>
+                  <Input
+                    type="date"
+                    value={dataVenda}
+                    onChange={(e) => setDataVenda(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Observações da NF</Label>
+                    <div className="flex gap-1 rounded-md border p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setObsModo("auto")}
+                        className={`px-2 py-0.5 text-xs rounded ${obsModo === "auto" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+                      >
+                        Gerar automático
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setObsModo("manual")}
+                        className={`px-2 py-0.5 text-xs rounded ${obsModo === "manual" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+                      >
+                        Manual
+                      </button>
+                    </div>
+                  </div>
+                  {obsModo === "auto" ? (
+                    <div className="rounded-md border bg-muted/40 p-3 text-sm whitespace-pre-line font-mono">
+                      {observacaoAutomatica}
+                    </div>
+                  ) : (
+                    <Textarea
+                      value={obs}
+                      onChange={(e) => setObs(e.target.value)}
+                      placeholder="Texto livre que vai no campo Observações da NF"
+                      rows={4}
+                    />
+                  )}
                 </div>
                 <label className="flex items-start gap-2 cursor-pointer p-3 rounded-lg border border-border hover:border-primary/50 transition-colors">
                   <input

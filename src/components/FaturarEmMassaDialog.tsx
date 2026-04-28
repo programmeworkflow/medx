@@ -75,7 +75,32 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
   const empresasById = useMemo(() => new Map(empresas.map((e: any) => [e.id, e])), [empresas]);
 
   const [centroCustoPadrao, setCentroCustoPadrao] = useState<string>("");
+  const [servicoPadrao, setServicoPadrao] = useState<string>("");
+  // Mês de referência padrão = mês da competência aberta (ou mês anterior)
+  const hojeBatch = new Date();
+  const [mesRefBatch, setMesRefBatch] = useState<number>(
+    compAtual?.mes ?? new Date(hojeBatch.getFullYear(), hojeBatch.getMonth() - 1, 1).getMonth() + 1
+  );
+  const [anoRefBatch, setAnoRefBatch] = useState<number>(
+    compAtual?.ano ?? hojeBatch.getFullYear()
+  );
   const [linhas, setLinhas] = useState<Linha[]>([]);
+
+  const { data: servicos = [] } = useQuery({
+    queryKey: ["ca-servicos"],
+    queryFn: async () => {
+      const r = await fetch("/api/contaazul/services");
+      const j = await r.json();
+      return (j?.items as { id: string; nome: string }[]) || [];
+    },
+    enabled: open,
+  });
+
+  // Sincroniza mês/ano com a competência atual quando o dialog abrir
+  useEffect(() => {
+    if (compAtual?.mes) setMesRefBatch(compAtual.mes);
+    if (compAtual?.ano) setAnoRefBatch(compAtual.ano);
+  }, [compAtual?.mes, compAtual?.ano]);
 
   // Default centro custo = primeiro com "EXAMES" no nome
   useEffect(() => {
@@ -135,6 +160,8 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
 
   const handleFaturar = async () => {
     if (selecionadas.length === 0) return toast.error("Nenhuma linha selecionada");
+    if (!servicoPadrao) return toast.error("Selecione o serviço");
+    const servicoNome = servicos.find((s) => s.id === servicoPadrao)?.nome || "Serviço";
     setProgress({ done: 0, total: selecionadas.length });
     let ok = 0;
     let fail = 0;
@@ -143,6 +170,8 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
       const l = selecionadas[i];
       try {
         const ret = calcularRetencao(l.categoria, l.valor, l.retencao);
+        const valorFmt = l.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const observacaoNF = `Referente ao(s) ${servicoNome} do mês de ${MESES[mesRefBatch - 1]}/${anoRefBatch}\nValor total: R$ ${valorFmt}`;
         const r = await fetch("/api/contaazul/create-receivable", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -150,10 +179,13 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
             cnpj: l.cnpj,
             razao_social: l.nome,
             centro_custo_id: l.centroCustoId,
-            servico: `Referente aos exames do mês de ${MESES[(compAtual?.mes ?? 1) - 1]}/${compAtual?.ano}`,
+            servico_id: servicoPadrao,
+            servico: servicoNome,
             valor: l.valor,
             data_venda: new Date().toISOString().slice(0, 10),
-            observacoes: `Total ${fmtBRL(l.valor)} | Retido ${fmtBRL(ret.total_retido)} | Líquido ${fmtBRL(ret.valor_liquido)}`,
+            observacoes: observacaoNF,
+            mes_referencia: mesRefBatch,
+            ano_referencia: anoRefBatch,
             emitir_nf: l.emitirNF,
             emitir_boleto: l.emitirBoleto,
             retencao: ret,
@@ -219,6 +251,38 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
               <SelectContent>
                 {centros.map((c) => (
                   <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="text-xs">Serviço:</Label>
+            <Select value={servicoPadrao} onValueChange={setServicoPadrao}>
+              <SelectTrigger className="w-[260px] h-8">
+                <SelectValue placeholder={servicos.length ? "Selecionar..." : "Carregando..."} />
+              </SelectTrigger>
+              <SelectContent>
+                {servicos.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>{s.nome}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="text-xs">Mês ref.:</Label>
+            <Select value={String(mesRefBatch)} onValueChange={(v) => setMesRefBatch(Number(v))}>
+              <SelectTrigger className="w-[130px] h-8"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {MESES.map((m, i) => (
+                  <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={String(anoRefBatch)} onValueChange={(v) => setAnoRefBatch(Number(v))}>
+              <SelectTrigger className="w-[90px] h-8"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {[hojeBatch.getFullYear() - 1, hojeBatch.getFullYear(), hojeBatch.getFullYear() + 1].map((a) => (
+                  <SelectItem key={a} value={String(a)}>{a}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

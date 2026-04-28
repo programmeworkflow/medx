@@ -137,14 +137,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (action === "services") {
       // Lista serviços cadastrados (necessário pra classificar como "Receita de serviço")
+      // Filtra ATIVO + PRESTADO por padrão (uso normal de faturamento). ?all=1 traz todos.
       const r = await caApi("GET", "/v1/servicos?perPage=200");
       const items = r?.itens || r?.items || r?.content || [];
+      const all = req.query.all === "1";
+      const filtered = all
+        ? items
+        : items.filter(
+            (s: any) =>
+              (s.status || "ATIVO") === "ATIVO" &&
+              (s.tipo_servico || "PRESTADO") === "PRESTADO"
+          );
       return res.status(200).json({
-        items: items.map((s: any) => ({
-          id: s.id,
-          nome: s.nome || s.descricao,
-          tipo_servico: s.tipo_servico,
-        })),
+        items: filtered
+          .map((s: any) => ({
+            id: s.id,
+            nome: s.nome || s.descricao,
+            tipo_servico: s.tipo_servico,
+            status: s.status,
+            valor: s.valor,
+          }))
+          .sort((a: any, b: any) => (a.nome || "").localeCompare(b.nome || "")),
       });
     }
     if (action === "bff") {
