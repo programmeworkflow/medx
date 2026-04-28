@@ -129,3 +129,39 @@ export async function caApi(method: string, endpoint: string, body?: any) {
   }
   return json;
 }
+
+// Endpoints BFF internos da UI (services.contaazul.com) — não documentados.
+// Headers extras (X-Tenant-Id, etc) podem ser exigidos; o token OAuth2 às vezes funciona.
+export async function caBff(
+  method: string,
+  url: string,
+  body?: any,
+  extraHeaders: Record<string, string> = {}
+) {
+  const token = await getValidAccessToken();
+  const init: any = {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Origin: "https://app.contaazul.com",
+      Referer: "https://app.contaazul.com/",
+      ...extraHeaders,
+    },
+  };
+  if (body !== undefined) init.body = JSON.stringify(body);
+  const r = await fetch(url, init);
+  const text = await r.text();
+  let json: any = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {}
+  return {
+    ok: r.ok,
+    status: r.status,
+    headers: Object.fromEntries(r.headers.entries()),
+    data: json,
+    text: text.slice(0, 1500),
+  };
+}
