@@ -646,6 +646,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    if (action === "list-vendas") {
+      // Lista contaazul_vendas locais (recentes primeiro) com status NF/boleto
+      const sb = supaAdmin();
+      const { data } = await sb
+        .from("contaazul_vendas")
+        .select("ca_venda_id, cnpj, servico, valor, data_venda, nf_status, nf_numero, boleto_status, boleto_url, created_at")
+        .order("created_at", { ascending: false })
+        .limit(20);
+      return res.status(200).json({ ok: true, vendas: data || [] });
+    }
+
+    if (action === "cancel-venda") {
+      // Cancela venda na CA (DELETE) + remove referência local
+      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+      const { venda_id } = (req.body || {}) as { venda_id?: string };
+      if (!venda_id) return res.status(400).json({ error: "venda_id obrigatório" });
+      let caResult: any = null;
+      let caError: string | null = null;
+      try {
+        caResult = await caApi("DELETE", `/v1/venda/${venda_id}`);
+      } catch (err: any) {
+        caError = err?.message || "erro CA";
+      }
+      const sb = supaAdmin();
+      await sb.from("contaazul_vendas").delete().eq("ca_venda_id", venda_id);
+      return res.status(200).json({
+        ok: !caError,
+        ca_result: caResult,
+        ca_error: caError,
+        local_removed: true,
+      });
+    }
+
     if (action === "emit-boleto") {
       // Emissão de boleto via BFF interno — POST /finance-pro/v2/charge-requests/batch-create
       // Auth via cookie x-ca-auth (set-bff-cookies). Conta financeira é a Receba Fácil.

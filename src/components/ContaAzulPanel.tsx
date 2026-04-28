@@ -48,6 +48,7 @@ export default function ContaAzulPanel() {
   const [dataVenda, setDataVenda] = useState(new Date().toISOString().slice(0, 10));
   const [obs, setObs] = useState("");
   const [emitirNF, setEmitirNF] = useState(false);
+  const [emitirBoleto, setEmitirBoleto] = useState(false);
 
   const { data: empresas = [] } = useQuery({ queryKey: ["empresas"], queryFn: fetchEmpresas });
   const { data: centros = [] } = useQuery({
@@ -140,17 +141,20 @@ export default function ContaAzulPanel() {
           data_venda: dataVenda,
           observacoes: obs,
           emitir_nf: emitirNF,
+          emitir_boleto: emitirBoleto,
         }),
       });
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j.error || "Erro ao criar venda");
-      toast.success(
-        emitirNF
-          ? "Venda criada — NF marcada como pendente (emita na UI da Conta Azul)"
-          : "Venda de serviço criada na Conta Azul!"
-      );
+      const partes: string[] = ["Venda criada"];
+      if (j?.nf?.status === "emitida") partes.push("NF emitida");
+      else if (j?.nf?.status === "em_processamento") partes.push("NF em processamento");
+      else if (j?.nf?.status === "erro") partes.push(`NF erro: ${j.nf.erro || "?"}`);
+      if (j?.boleto?.status === "solicitado") partes.push("boleto gerado");
+      else if (j?.boleto?.status === "erro") partes.push(`boleto erro: ${j.boleto.erro || "?"}`);
+      toast.success(partes.join(" — "));
       setOpen(false);
-      setServico(""); setValor(""); setObs(""); setEmitirNF(false); setCentroCustoId("");
+      setServico(""); setValor(""); setObs(""); setEmitirNF(false); setEmitirBoleto(false); setCentroCustoId("");
     } catch (e: any) {
       toast.error(`${e?.message}`);
     } finally {
@@ -285,10 +289,23 @@ export default function ContaAzulPanel() {
                     className="mt-0.5"
                   />
                   <div className="flex-1">
-                    <div className="text-sm font-medium">Marcar como pendente de NF</div>
+                    <div className="text-sm font-medium">Emitir NFS-e automaticamente</div>
                     <div className="text-xs text-muted-foreground">
-                      A Conta Azul não permite emitir NFS-e via API. Marcar aqui registra a venda
-                      como pendente — emita manualmente em Vendas → venda → Nota Fiscal na UI.
+                      Após criar a venda, transmite a NFS-e à prefeitura via Conta Azul.
+                    </div>
+                  </div>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer p-3 rounded-lg border border-border hover:border-primary/50 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={emitirBoleto}
+                    onChange={(e) => setEmitirBoleto(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium">Gerar boleto bancário</div>
+                    <div className="text-xs text-muted-foreground">
+                      Emite boleto pela conta Receba Fácil cadastrada na Conta Azul.
                     </div>
                   </div>
                 </label>

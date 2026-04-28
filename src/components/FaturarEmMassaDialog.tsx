@@ -56,6 +56,7 @@ interface Linha {
   centroCustoId: string;
   retencao: RetencaoPadrao;
   emitirNF: boolean;
+  emitirBoleto: boolean;
 }
 
 export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto[] }) {
@@ -108,6 +109,7 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
           centroCustoId: centroCustoPadrao,
           retencao: retPadrao,
           emitirNF: !!empresa?.emitir_nf_padrao,
+          emitirBoleto: false,
         };
       });
     setLinhas(novas);
@@ -153,6 +155,7 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
             data_venda: new Date().toISOString().slice(0, 10),
             observacoes: `Total ${fmtBRL(l.valor)} | Retido ${fmtBRL(ret.total_retido)} | Líquido ${fmtBRL(ret.valor_liquido)}`,
             emitir_nf: l.emitirNF,
+            emitir_boleto: l.emitirBoleto,
             retencao: ret,
           }),
         });
@@ -241,6 +244,7 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
                 <TableHead>Centro custo</TableHead>
                 <TableHead>Retenção</TableHead>
                 <TableHead className="text-center">NF</TableHead>
+                <TableHead className="text-center">Boleto</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -298,11 +302,18 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
                       disabled={l.semCadastro}
                     />
                   </TableCell>
+                  <TableCell className="text-center">
+                    <Checkbox
+                      checked={l.emitirBoleto}
+                      onCheckedChange={(c) => updateLinha(l.faturamentoId, { emitirBoleto: !!c })}
+                      disabled={l.semCadastro}
+                    />
+                  </TableCell>
                 </TableRow>
               ))}
               {linhas.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                     Nenhum faturamento pendente para a competência atual.
                   </TableCell>
                 </TableRow>
