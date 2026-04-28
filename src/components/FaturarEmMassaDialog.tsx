@@ -311,18 +311,23 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
           </Table>
         </div>
 
-        <div className="flex items-center justify-between pt-2">
+        <div className="flex flex-col gap-2 pt-2">
           <p className="text-xs text-muted-foreground">
-            Cada empresa selecionada vai gerar uma <b>conta a receber</b> na Conta Azul (boleto + email automático). NF só será emitida se o checkbox estiver marcado.
+            Cada selecionada vira uma <b>Venda de Serviço (Receita de serviço)</b> aprovada na Conta Azul.
+            A retenção é informada nas observações. <b>Marcar "NF"</b> sinaliza pendência —
+            a Conta Azul não permite emitir NFS-e via API, então a emissão é feita na UI da CA
+            (Vendas → venda → Nota Fiscal) ou por contrato com emissão automática.
           </p>
-          <Button
-            onClick={handleFaturar}
-            disabled={selecionadas.length === 0 || !!progress}
-          >
-            {progress
-              ? `Processando ${progress.done}/${progress.total}...`
-              : `Faturar ${selecionadas.length} selecionada${selecionadas.length !== 1 ? "s" : ""}`}
-          </Button>
+          <div className="flex items-center justify-end">
+            <Button
+              onClick={handleFaturar}
+              disabled={selecionadas.length === 0 || !!progress}
+            >
+              {progress
+                ? `Processando ${progress.done}/${progress.total}...`
+                : `Faturar ${selecionadas.length} selecionada${selecionadas.length !== 1 ? "s" : ""}`}
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

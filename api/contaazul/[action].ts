@@ -79,8 +79,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     if (action === "debug") {
       const path = (req.query.path as string) || "/v1/pessoas?perPage=1";
+      const method = (req.query.method as string)?.toUpperCase() || (req.method === "GET" ? "GET" : "POST");
       try {
-        const r = await caApi("GET", path);
+        const r = await caApi(method, path, method === "GET" ? undefined : req.body);
         return res.status(200).json({ ok: true, data: r });
       } catch (err: any) {
         return res.status(200).json({ ok: false, error: err?.message });
@@ -95,115 +96,181 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const cnpjDigits = String(body.cnpj).replace(/\D/g, "");
       if (cnpjDigits.length !== 14) return res.status(400).json({ error: "CNPJ inválido" });
 
-      // 1. Busca pessoa por CNPJ (Conta Azul retorna { items: [...] })
+      // 1. Busca pessoa por CNPJ — pode haver várias duplicadas; prefere a que já é Cliente
       let pessoa: any = null;
       try {
         const r = await caApi("GET", `/v1/pessoas?busca=${cnpjDigits}`);
-        const items = r?.items || r?.content || (Array.isArray(r) ? r : []);
-        pessoa = items.find((p: any) => (p?.documento || "").replace(/\D/g, "") === cnpjDigits) || null;
+        const items = (r?.items || r?.content || (Array.isArray(r) ? r : [])).filter(
+          (p: any) => (p?.documento || "").replace(/\D/g, "") === cnpjDigits
+        );
+        const hasPerfil = (p: any, alvo: string) =>
+          (p?.perfis || []).some((x: any) => (x?.tipo_perfil || x) === alvo);
+        pessoa =
+          items.find((p: any) => hasPerfil(p, "Cliente")) ||
+          items[0] ||
+          null;
       } catch (_) {}
 
       // 2. Cria pessoa se não existe
       if (!pessoa) {
-        const created = await caApi("POST", "/v1/pessoas", {
+        pessoa = await caApi("POST", "/v1/pessoas", {
           nome: body.razao_social || `Cliente ${cnpjDigits}`,
           documento: cnpjDigits,
           tipo_pessoa: "Jurídica",
           perfis: ["Cliente"],
           email: body.email || null,
         });
-        pessoa = created;
       }
       const personId = pessoa.id || pessoa.uuid || pessoa.uuid_pessoa;
       if (!personId) throw new Error("Falha ao obter id da pessoa na Conta Azul");
 
-      // 3. Cria conta a receber (na nova API substitui "venda")
-      const dataVenda = body.data_venda || new Date().toISOString().slice(0, 10);
-      // Categoria receita default — pega a primeira categoria de tipo RECEITA disponível
-      let categoriaId = body.categoria_id as string | undefined;
-      if (!categoriaId) {
+      // 3. Garante perfil Cliente (POST /v1/venda exige; pessoas existentes podem ser só Fornecedor)
+      const perfisAtuais = (pessoa.perfis || []).map((p: any) => p?.tipo_perfil || p);
+      if (!perfisAtuais.includes("Cliente")) {
+        const novosPerfis = [
+          { tipo_perfil: "Cliente" },
+          ...perfisAtuais
+            .filter((p: string) => p && p !== "Cliente")
+            .map((p: string) => ({ tipo_perfil: p })),
+        ];
         try {
-          const cats = await caApi("GET", "/v1/categorias?perPage=200");
-          const receita = (cats?.itens || []).find((c: any) => c.tipo === "RECEITA");
-          categoriaId = receita?.id;
+          await caApi("PATCH", `/v1/pessoas/${personId}`, { perfis: novosPerfis });
         } catch (_) {}
       }
-      if (!categoriaId) throw new Error("Nenhuma categoria de RECEITA cadastrada na Conta Azul");
 
-      const valor = Number(body.valor);
-
-      // Resolve serviço (necessário pra classificar como "Receita de serviço")
+      // 4. Resolve serviço ATIVO + PRESTADO (Receita de Serviço exige serviço ativo)
       let servicoId = body.servico_id as string | undefined;
       if (!servicoId) {
-        try {
-          const svcs = await caApi("GET", "/v1/servicos?perPage=200");
-          const items = svcs?.itens || svcs?.items || [];
-          const prestado = items.find((s: any) => s.tipo_servico === "PRESTADO") || items[0];
-          servicoId = prestado?.id;
-        } catch (_) {}
+        const svcs = await caApi("GET", "/v1/servicos?perPage=200");
+        const items = svcs?.itens || svcs?.items || [];
+        const ativoPrestado = items.find(
+          (s: any) => s.status === "ATIVO" && s.tipo_servico === "PRESTADO"
+        );
+        servicoId = ativoPrestado?.id;
+      }
+      if (!servicoId) {
+        throw new Error("Nenhum serviço ATIVO + PRESTADO cadastrado na Conta Azul");
       }
 
-      const ratioRow: any = { id_categoria: categoriaId, valor };
-      if (body.centro_custo_id) {
-        ratioRow.rateio_centro_custo = [
-          { id_centro_custo: body.centro_custo_id, valor },
-        ];
-      }
-      if (servicoId) {
-        // Tenta vincular o serviço dentro do rateio também — schema da Conta Azul ainda incerto
-        ratioRow.id_servico = servicoId;
-      }
-
-      const payload: any = {
-        tipo_lancamento: "SERVICO",
-        data_competencia: dataVenda,
-        valor,
-        descricao: body.servico,
-        observacao: body.observacoes || null,
-        contato: personId,
-        rateio: [ratioRow],
+      // 5. Cria venda em /v1/venda (Receita de Serviço — aceita NF e boleto)
+      const dataVenda = body.data_venda || new Date().toISOString().slice(0, 10);
+      const valor = Number(body.valor);
+      const buildPayload = (numero: number) => ({
+        id_cliente: personId,
+        numero,
+        data_venda: dataVenda,
+        situacao: "APROVADO",
+        observacoes: body.observacoes || undefined,
+        itens: [
+          {
+            id: servicoId,
+            descricao: body.servico,
+            quantidade: 1,
+            valor,
+          },
+        ],
         condicao_pagamento: {
-          tipo: "A_VISTA",
+          opcao_condicao_pagamento: "À vista",
           parcelas: [
             {
               numero_parcela: 1,
               valor,
               data_vencimento: dataVenda,
               descricao: body.servico,
-              detalhe_valor: {
-                valor_bruto: valor,
-                valor_liquido: valor,
-                multa: 0,
-                juros: 0,
-                desconto: 0,
-                taxa: 0,
-              },
             },
           ],
         },
-      };
-      if (servicoId) {
-        // Candidatos de campo top-level pra classificar como Receita de Serviço
-        payload.vinculo_servico_id = servicoId;
-        payload.id_servico = servicoId;
-        payload.servico_id = servicoId;
-      }
-      const venda = await caApi("POST", "/v1/financeiro/eventos-financeiros/contas-a-receber", payload);
+      });
 
-      // 4. Salva referência local
+      let venda: any;
+      try {
+        venda = await caApi("POST", "/v1/venda", buildPayload(1));
+      } catch (err: any) {
+        // Conta Azul devolve "O nº NNN é o próximo disponível" no erro
+        const m = String(err?.message || "").match(/nº\s+(\d+)/);
+        if (!m) throw err;
+        venda = await caApi("POST", "/v1/venda", buildPayload(Number(m[1])));
+      }
+      const vendaId = venda?.id || venda?.uuid || null;
+
+      // 6. NF — Conta Azul não permite emitir NFS-e via API (somente consulta).
+      // Marca pendente_manual quando solicitado; o user emite na UI da CA ou via contrato auto.
+      const nfStatus: string = body.emitir_nf ? "pendente_manual" : "nao_solicitada";
+
+      // 7. Salva referência local
       const sb = supaAdmin();
       await sb.from("contaazul_vendas").insert({
-        ca_venda_id: venda?.id || venda?.uuid || null,
+        ca_venda_id: vendaId,
         cnpj: cnpjDigits,
         pessoa_id: personId,
         servico: body.servico,
-        valor: Number(body.valor),
+        valor,
         data_venda: dataVenda,
         observacoes: body.observacoes || null,
-        raw: venda,
+        nf_status: nfStatus,
+        raw: { venda },
       });
 
-      return res.status(200).json({ ok: true, venda, pessoa: { id: personId, cnpj: cnpjDigits } });
+      return res.status(200).json({
+        ok: true,
+        venda,
+        pessoa: { id: personId, cnpj: cnpjDigits },
+        nf: { status: nfStatus },
+      });
+    }
+
+    if (action === "check-nf") {
+      // Consulta NFS-e emitida pra uma venda (a Conta Azul só expõe leitura via API).
+      // ?venda_id=<uuid> — se o registro local existir, atualiza nf_status / nf_erro.
+      const venda_id = (req.query.venda_id as string) || (req.body?.venda_id as string);
+      if (!venda_id) return res.status(400).json({ error: "venda_id obrigatório" });
+      const dataIni = (req.query.data_de as string) ||
+        new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+      const dataFim = (req.query.data_ate as string) ||
+        new Date().toISOString().slice(0, 10);
+      const r = await caApi(
+        "GET",
+        `/v1/notas-fiscais-servico?pagina=1&tamanho_pagina=100&data_competencia_de=${dataIni}&data_competencia_ate=${dataFim}&id_venda=${venda_id}`
+      );
+      const items = (r?.itens || r?.items || []) as any[];
+      const nf = items.find((n: any) => n.id_venda === venda_id) || null;
+      const sb = supaAdmin();
+      if (nf?.status === "EMITIDA") {
+        await sb
+          .from("contaazul_vendas")
+          .update({
+            nf_status: "emitida",
+            nf_erro: null,
+            nf_numero: nf.numero_nfse,
+            nf_data: nf.informacao_transmissao?.data_inicio_emissao || null,
+          })
+          .eq("ca_venda_id", venda_id);
+      } else if (nf?.status) {
+        await sb
+          .from("contaazul_vendas")
+          .update({ nf_status: String(nf.status).toLowerCase(), nf_erro: null })
+          .eq("ca_venda_id", venda_id);
+      }
+      return res.status(200).json({ ok: true, nf, total_no_periodo: items.length });
+    }
+
+    if (action === "emit-nf") {
+      // A API v2 da Conta Azul NÃO permite emitir NFS-e programaticamente.
+      // Mantém o endpoint pra compatibilidade — só marca pendente_manual.
+      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+      const { venda_id } = (req.body || {}) as { venda_id?: string };
+      if (!venda_id) return res.status(400).json({ error: "venda_id obrigatório" });
+      const sb = supaAdmin();
+      await sb
+        .from("contaazul_vendas")
+        .update({ nf_status: "pendente_manual" })
+        .eq("ca_venda_id", venda_id);
+      return res.status(200).json({
+        ok: true,
+        message:
+          "API Conta Azul não permite emitir NFS-e via API. Emita manualmente na UI da Conta Azul (menu Vendas > venda > Nota Fiscal) ou configure um contrato com emissão automática.",
+        venda_id,
+      });
     }
 
     return res.status(404).json({ error: `action desconhecida: ${action}` });

@@ -143,11 +143,11 @@ export default function ContaAzulPanel() {
         }),
       });
       const j = await r.json();
-      if (!r.ok || !j.ok) throw new Error(j.error || "Erro ao criar conta a receber");
+      if (!r.ok || !j.ok) throw new Error(j.error || "Erro ao criar venda");
       toast.success(
         emitirNF
-          ? "Faturamento criado: conta a receber + NF emitida!"
-          : "Conta a receber criada na Conta Azul!"
+          ? "Venda criada — NF marcada como pendente (emita na UI da Conta Azul)"
+          : "Venda de serviço criada na Conta Azul!"
       );
       setOpen(false);
       setServico(""); setValor(""); setObs(""); setEmitirNF(false); setCentroCustoId("");
@@ -167,7 +167,7 @@ export default function ContaAzulPanel() {
               Conta Azul
             </h2>
             <p className="text-sm text-muted-foreground">
-              Lance contas a receber direto no Conta Azul a partir das empresas cadastradas
+              Lance vendas de serviço direto no Conta Azul a partir das empresas cadastradas
             </p>
           </div>
           {status?.connected ? (
@@ -285,9 +285,10 @@ export default function ContaAzulPanel() {
                     className="mt-0.5"
                   />
                   <div className="flex-1">
-                    <div className="text-sm font-medium">Emitir nota fiscal</div>
+                    <div className="text-sm font-medium">Marcar como pendente de NF</div>
                     <div className="text-xs text-muted-foreground">
-                      Exige NFS-e configurada na Conta Azul (prefeitura/série RPS) pra esse CNPJ
+                      A Conta Azul não permite emitir NFS-e via API. Marcar aqui registra a venda
+                      como pendente — emita manualmente em Vendas → venda → Nota Fiscal na UI.
                     </div>
                   </div>
                 </label>
