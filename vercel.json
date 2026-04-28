@@ -13,7 +13,7 @@
     },
     {
       "path": "/api/contaazul/refresh-session",
-      "schedule": "0 */6 * * *"
+      "schedule": "0 4 * * *"
     }
   ]
 }
