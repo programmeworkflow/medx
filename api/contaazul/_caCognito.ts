@@ -275,21 +275,193 @@ export async function loadBffCookies(): Promise<BffCookies | null> {
   };
 }
 
+// === Login interativo Cognito (chamado 1x quando refresh expira) ===
+// Recebe email/senha + código TOTP do app autenticador. Salva AccessToken
+// (= x-ca-auth) + RefreshToken Cognito (que vale ~30 dias) na tabela.
+
+interface CognitoSession {
+  access_token: string; // = x-ca-auth (JWT)
+  refresh_token: string; // Cognito refresh — vale ~30 dias
+  expires_at: string; // ISO do exp do access_token
+  session_id: string; // UUID gerado 1x, reusado
+  email: string;
+}
+
+export async function cognitoLoginInteractive(
+  email: string,
+  senha: string,
+  totpCode?: string
+): Promise<CognitoSession> {
+  const r: any = await cognitoCall("InitiateAuth", {
+    AuthFlow: "USER_PASSWORD_AUTH",
+    ClientId: CLIENT_ID,
+    AuthParameters: {
+      USERNAME: email,
+      PASSWORD: senha,
+      SECRET_HASH: secretHash(email),
+    },
+  });
+
+  let auth = r?.AuthenticationResult;
+
+  // MFA TOTP exigido
+  if (!auth && r?.ChallengeName === "SOFTWARE_TOKEN_MFA") {
+    if (!totpCode) {
+      throw new Error("MFA_REQUIRED: passe totp_code (6 dígitos do app autenticador)");
+    }
+    const username = r.ChallengeParameters?.USER_ID_FOR_SRP || email;
+    const r2: any = await cognitoCall("RespondToAuthChallenge", {
+      ChallengeName: "SOFTWARE_TOKEN_MFA",
+      ClientId: CLIENT_ID,
+      Session: r.Session,
+      ChallengeResponses: {
+        USERNAME: username,
+        SOFTWARE_TOKEN_MFA_CODE: totpCode,
+        SECRET_HASH: secretHash(username),
+      },
+    });
+    auth = r2?.AuthenticationResult;
+    if (!auth) {
+      throw new Error(
+        `MFA não retornou AuthenticationResult: ${JSON.stringify(r2).slice(0, 250)}`
+      );
+    }
+  }
+
+  if (!auth) {
+    throw new Error(
+      `Login Cognito não suportado: ${JSON.stringify(r).slice(0, 250)}`
+    );
+  }
+
+  return saveCognitoSession(email, auth.AccessToken, auth.RefreshToken);
+}
+
+function saveCognitoSessionLocal(s: CognitoSession) {
+  const sb = supaAdmin();
+  return sb.from("contaazul_session").upsert(
+    {
+      id: 1,
+      email: s.email,
+      id_token: encryptSecret(s.access_token), // AccessToken JWT (= x-ca-auth)
+      access_token: encryptSecret(""), // legado/não usado
+      refresh_token: encryptSecret(""), // legado (modo cookie usava como session_id)
+      cognito_refresh_token: encryptSecret(s.refresh_token),
+      session_id: s.session_id,
+      expires_at: s.expires_at,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "id" }
+  );
+}
+
+async function saveCognitoSession(
+  email: string,
+  accessToken: string,
+  refreshToken: string,
+  reuseSessionId?: string | null
+): Promise<CognitoSession> {
+  const expMs = jwtExpiry(accessToken);
+  const session_id = reuseSessionId || crypto.randomUUID();
+  const sess: CognitoSession = {
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    expires_at: new Date(expMs - 120000).toISOString(),
+    session_id,
+    email,
+  };
+  await saveCognitoSessionLocal(sess);
+  return sess;
+}
+
+async function loadCognitoSession(): Promise<CognitoSession | null> {
+  const sb = supaAdmin();
+  const { data } = await sb.from("contaazul_session").select("*").eq("id", 1).maybeSingle();
+  if (!data?.cognito_refresh_token) return null;
+  return {
+    access_token: decryptSecret(data.id_token),
+    refresh_token: decryptSecret(data.cognito_refresh_token),
+    expires_at: data.expires_at,
+    session_id: data.session_id || crypto.randomUUID(),
+    email: data.email,
+  };
+}
+
+// Renova o AccessToken via REFRESH_TOKEN_AUTH (sem MFA).
+// Chamado pelo cron a cada 6h e on-demand quando expira.
+export async function cognitoRefresh(): Promise<CognitoSession> {
+  const cur = await loadCognitoSession();
+  if (!cur) throw new Error("Sem sessão Cognito. Faça login via /api/contaazul/cognito-login");
+  const r: any = await cognitoCall("InitiateAuth", {
+    AuthFlow: "REFRESH_TOKEN_AUTH",
+    ClientId: CLIENT_ID,
+    AuthParameters: {
+      REFRESH_TOKEN: cur.refresh_token,
+      SECRET_HASH: secretHash(cur.email),
+    },
+  });
+  const a = r?.AuthenticationResult;
+  if (!a?.AccessToken) {
+    throw new Error(`Refresh falhou (refresh_token expirou?): ${JSON.stringify(r).slice(0, 250)}`);
+  }
+  // RefreshToken pode ou não vir no response — Cognito reutiliza o velho se omitido
+  return saveCognitoSession(cur.email, a.AccessToken, a.RefreshToken || cur.refresh_token, cur.session_id);
+}
+
+export async function cognitoStatus() {
+  const sess = await loadCognitoSession();
+  if (!sess) return { connected: false };
+  const expiresAt = new Date(sess.expires_at).getTime();
+  return {
+    connected: true,
+    email: sess.email,
+    access_token_expires_at: sess.expires_at,
+    access_token_expires_in_seconds: Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)),
+    session_id: sess.session_id,
+  };
+}
+
+// Cookies BFF derivados da sessão Cognito (usado pelo caBffSession quando
+// existe sessão Cognito). Renova automaticamente se AccessToken expirou.
+async function bffCookiesFromCognito(): Promise<BffCookies | null> {
+  let sess = await loadCognitoSession();
+  if (!sess) return null;
+  if (new Date(sess.expires_at).getTime() < Date.now() + 60000) {
+    sess = await cognitoRefresh();
+  }
+  // device_key vem dentro do JWT
+  let deviceKey = "";
+  try {
+    const payload = JSON.parse(
+      Buffer.from(sess.access_token.split(".")[1], "base64url").toString("utf8")
+    );
+    deviceKey = payload.device_key || "";
+  } catch {}
+  return {
+    x_ca_auth: sess.access_token,
+    x_ca_device_key: deviceKey,
+    x_ca_session_id: sess.session_id,
+    expires_at: sess.expires_at,
+  };
+}
+
 export async function caBffSession(
   method: string,
   url: string,
   body?: any,
   extraHeaders: Record<string, string> = {}
 ) {
-  const c = await loadBffCookies();
+  // Prefere sessão Cognito (auto-refresh). Fallback pros cookies copiados.
+  let c: BffCookies | null = await bffCookiesFromCognito();
+  if (!c) c = await loadBffCookies();
   if (!c) {
     throw new Error(
-      "Cookies BFF não configurados. Use POST /api/contaazul/set-bff-cookies"
+      "Sessão Conta Azul não configurada. Faça login em /api/contaazul/cognito-login ou cole cookies em /api/contaazul/set-bff-cookies"
     );
   }
   if (new Date(c.expires_at).getTime() < Date.now()) {
     throw new Error(
-      `Cookie x-ca-auth expirou em ${c.expires_at}. Recopie do navegador via /api/contaazul/set-bff-cookies`
+      `Sessão BFF expirou em ${c.expires_at}. Refaça login Cognito ou recopie cookies.`
     );
   }
   const cookieHeader = [

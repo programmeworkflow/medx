@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { CheckCircle2, AlertCircle, Plus, ExternalLink, Power } from "lucide-react";
+import { CheckCircle2, AlertCircle, Plus, ExternalLink, Power, KeyRound } from "lucide-react";
 import { toast } from "sonner";
 import { fetchEmpresas, type Empresa } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
@@ -34,10 +34,23 @@ interface CAStatus {
   expires_in_seconds?: number;
 }
 
+interface CognitoStatus {
+  connected: boolean;
+  email?: string;
+  access_token_expires_at?: string;
+  access_token_expires_in_seconds?: number;
+}
+
 export default function ContaAzulPanel() {
   const [params, setParams] = useSearchParams();
   const [status, setStatus] = useState<CAStatus | null>(null);
+  const [cogStatus, setCogStatus] = useState<CognitoStatus | null>(null);
   const [open, setOpen] = useState(false);
+  const [cogOpen, setCogOpen] = useState(false);
+  const [cogEmail, setCogEmail] = useState("");
+  const [cogSenha, setCogSenha] = useState("");
+  const [cogTotp, setCogTotp] = useState("");
+  const [cogSubmitting, setCogSubmitting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   // form fields
@@ -68,6 +81,47 @@ export default function ContaAzulPanel() {
       setStatus(j);
     } catch (_) {
       setStatus({ connected: false });
+    }
+    try {
+      const r = await fetch(`${API_BASE}/api/contaazul/cognito-status`);
+      const j = await r.json();
+      setCogStatus(j);
+    } catch (_) {
+      setCogStatus({ connected: false });
+    }
+  };
+
+  const handleCognitoLogin = async () => {
+    if (!cogEmail || !cogSenha) {
+      return toast.error("Email e senha obrigatórios");
+    }
+    setCogSubmitting(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/contaazul/cognito-login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: cogEmail,
+          senha: cogSenha,
+          totp_code: cogTotp || undefined,
+        }),
+      });
+      const j = await r.json();
+      if (j.mfa_required) {
+        toast.warning("Conta exige código TOTP do app autenticador");
+        setCogSubmitting(false);
+        return;
+      }
+      if (!j.ok) throw new Error(j.error || "erro");
+      toast.success("Login Cognito ok — sessão renovará automática por ~30 dias");
+      setCogOpen(false);
+      setCogSenha("");
+      setCogTotp("");
+      loadStatus();
+    } catch (e: any) {
+      toast.error(`Erro: ${e?.message}`);
+    } finally {
+      setCogSubmitting(false);
     }
   };
 
@@ -192,10 +246,88 @@ export default function ContaAzulPanel() {
 
         {status?.connected && status.expires_in_seconds != null && (
           <p className="text-xs text-muted-foreground">
-            Token válido por mais {Math.max(0, Math.floor(status.expires_in_seconds / 60))} minutos
+            Token OAuth2 válido por mais {Math.max(0, Math.floor(status.expires_in_seconds / 60))} minutos
             (renovação automática quando expirar)
           </p>
         )}
+
+        {/* Sessão Cognito (BFF) — usada pra emitir NF e boleto */}
+        <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <KeyRound className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <div className="font-medium">Sessão Cognito (NF + boleto)</div>
+                <div className="text-xs text-muted-foreground">
+                  {cogStatus?.connected
+                    ? `Conectado como ${cogStatus.email} — token expira em ${
+                        cogStatus.access_token_expires_in_seconds != null
+                          ? Math.max(0, Math.floor(cogStatus.access_token_expires_in_seconds / 3600))
+                          : "?"
+                      }h (renovação automática)`
+                    : "Não conectado — login válido por ~30 dias"}
+                </div>
+              </div>
+            </div>
+            <Dialog open={cogOpen} onOpenChange={setCogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm">
+                  {cogStatus?.connected ? "Re-logar" : "Logar Cognito"}
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle className="font-display">Login Conta Azul (Cognito)</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 mt-2">
+                  <p className="text-xs text-muted-foreground">
+                    Login direto no AWS Cognito da Conta Azul. O refresh token salvo aqui vale
+                    ~30 dias e renova o acesso à NF/boleto sozinho. Você só faz isso de novo quando
+                    o sistema avisar.
+                  </p>
+                  <div className="space-y-2">
+                    <Label>Email Conta Azul</Label>
+                    <Input
+                      type="email"
+                      value={cogEmail}
+                      onChange={(e) => setCogEmail(e.target.value)}
+                      placeholder="financeiro@empresa.com.br"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Senha</Label>
+                    <Input
+                      type="password"
+                      value={cogSenha}
+                      onChange={(e) => setCogSenha(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Código do app autenticador (TOTP)</Label>
+                    <Input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={cogTotp}
+                      onChange={(e) => setCogTotp(e.target.value.replace(/\D/g, ""))}
+                      placeholder="6 dígitos"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Abra Google Authenticator (ou similar), pegue o código atual da Conta Azul.
+                    </p>
+                  </div>
+                  <Button
+                    onClick={handleCognitoLogin}
+                    disabled={cogSubmitting}
+                    className="w-full"
+                  >
+                    {cogSubmitting ? "Logando..." : "Logar"}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </div>
 
         {!status?.connected && (
           <div className="rounded-lg border border-warning/30 bg-warning/5 p-3 text-sm">

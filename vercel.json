@@ -10,6 +10,10 @@
     {
       "path": "/api/esocial/sync",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/contaazul/refresh-session",
+      "schedule": "0 */6 * * *"
     }
   ]
 }

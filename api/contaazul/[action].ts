@@ -9,7 +9,14 @@ import {
   caBff,
   FRONT_URL,
 } from "./_ca.js";
-import { caBffSession, saveBffCookies, loadBffCookies } from "./_caCognito.js";
+import {
+  caBffSession,
+  saveBffCookies,
+  loadBffCookies,
+  cognitoLoginInteractive,
+  cognitoRefresh,
+  cognitoStatus,
+} from "./_caCognito.js";
 
 // Garante que a pessoa na Conta Azul tem endereço completo (exigido pra NFS-e
 // pela maioria das prefeituras). Tenta puxar do registro local da empresa em
@@ -787,6 +794,57 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         payload_enviado: payload,
         raw: r.data,
       });
+    }
+
+    if (action === "cognito-login") {
+      // Login interativo Cognito (1x quando refresh expirar — ~30 dias)
+      // POST { email, senha, totp_code? }
+      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+      const { email, senha, totp_code } = (req.body || {}) as {
+        email?: string;
+        senha?: string;
+        totp_code?: string;
+      };
+      if (!email || !senha) {
+        return res.status(400).json({ error: "email e senha obrigatórios" });
+      }
+      try {
+        const sess = await cognitoLoginInteractive(email, senha, totp_code);
+        return res.status(200).json({
+          ok: true,
+          email: sess.email,
+          access_token_expires_at: sess.expires_at,
+          mensagem: "Login Cognito ok. Refresh válido por ~30 dias.",
+        });
+      } catch (err: any) {
+        const msg = err?.message || "erro desconhecido";
+        const mfaRequired = msg.startsWith("MFA_REQUIRED");
+        return res.status(mfaRequired ? 200 : 500).json({
+          ok: false,
+          mfa_required: mfaRequired,
+          error: msg,
+        });
+      }
+    }
+
+    if (action === "refresh-session") {
+      // Renova AccessToken via refresh_token Cognito (sem MFA).
+      // Chamado pelo cron Vercel a cada 6h.
+      try {
+        const sess = await cognitoRefresh();
+        return res.status(200).json({
+          ok: true,
+          email: sess.email,
+          access_token_expires_at: sess.expires_at,
+        });
+      } catch (err: any) {
+        return res.status(200).json({ ok: false, error: err?.message });
+      }
+    }
+
+    if (action === "cognito-status") {
+      const s = await cognitoStatus();
+      return res.status(200).json(s);
     }
 
     return res.status(404).json({ error: `action desconhecida: ${action}` });
