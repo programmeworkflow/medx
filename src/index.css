@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -101,11 +101,11 @@
 
   body {
     @apply bg-background text-foreground font-sans antialiased;
-    font-family: 'Inter', sans-serif;
+    font-family: 'DM Sans', system-ui, sans-serif;
   }
 
   h1, h2, h3, h4, h5, h6 {
-    font-family: 'Space Grotesk', sans-serif;
+    font-family: 'DM Sans', system-ui, sans-serif;
   }
 }
 
@@ -122,4 +122,412 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   @apply bg-muted-foreground/40;
+}
+
+/* ============================================================
+   FUTURISTIC OVERLAY — MedX app (dual theme: dark + light)
+   ============================================================ */
+@layer base {
+  body { position: relative; overflow-x: hidden; min-height: 100vh; }
+  body::before, body::after {
+    content: ""; position: fixed; pointer-events: none; z-index: 0;
+    border-radius: 50%; filter: blur(90px); opacity: 0.5;
+    animation: floatOrb 18s ease-in-out infinite;
+  }
+  body::before {
+    width: 520px; height: 520px; top: -140px; left: -160px;
+    background: radial-gradient(circle, rgba(56,189,248,0.5) 0%, rgba(56,189,248,0) 70%);
+  }
+  body::after {
+    width: 620px; height: 620px; bottom: -200px; right: -180px;
+    background: radial-gradient(circle, rgba(16,185,129,0.45) 0%, rgba(16,185,129,0) 70%);
+    animation-delay: -9s;
+  }
+  @keyframes floatOrb {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    33%      { transform: translate(40px, -30px) scale(1.08); }
+    66%      { transform: translate(-30px, 50px) scale(0.95); }
+  }
+  @keyframes floatSlow {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-10px); }
+  }
+  #root, main { position: relative; z-index: 1; }
+}
+
+/* DARK theme: deep navy with glow */
+html.dark,
+html.dark body,
+html.dark #root {
+  background:
+    radial-gradient(ellipse at top left,  rgba(56,189,248,0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at bottom right, rgba(16,185,129,0.08) 0%, transparent 50%),
+    linear-gradient(180deg, #0a0e17 0%, #0d1220 100%);
+  color: #f0f6fc;
+}
+
+/* LIGHT theme: soft gradient with same orb tones */
+html:not(.dark),
+html:not(.dark) body,
+html:not(.dark) #root {
+  background:
+    radial-gradient(ellipse at top left,  rgba(56,189,248,0.10) 0%, transparent 50%),
+    radial-gradient(ellipse at bottom right, rgba(16,185,129,0.10) 0%, transparent 50%),
+    linear-gradient(180deg, #f5f7fb 0%, #eaf0fa 100%);
+  color: #0f172a;
+}
+
+/* Sidebar glass — dark vs light */
+html.dark [data-sidebar="sidebar"],
+html.dark aside[class*="sidebar"],
+html.dark aside:has(nav) {
+  background: linear-gradient(180deg, rgba(22,27,34,0.85) 0%, rgba(28,34,48,0.75) 100%) !important;
+  backdrop-filter: blur(20px) saturate(1.4);
+  border-right: 1px solid rgba(255,255,255,0.06);
+  box-shadow: 4px 0 30px rgba(0,0,0,0.4);
+}
+html:not(.dark) [data-sidebar="sidebar"],
+html:not(.dark) aside[class*="sidebar"],
+html:not(.dark) aside:has(nav) {
+  background: linear-gradient(180deg, rgba(255,255,255,0.85) 0%, rgba(245,247,251,0.78) 100%) !important;
+  backdrop-filter: blur(20px) saturate(1.4);
+  border-right: 1px solid rgba(15,23,42,0.06);
+  box-shadow: 4px 0 30px rgba(15,23,42,0.06);
+}
+
+/* 3D primary buttons (same in both themes) */
+button[class*="bg-primary"],
+button[class*="bg-accent"],
+button[data-variant="default"],
+a[class*="bg-primary"] {
+  background: linear-gradient(135deg, #10b981 0%, #06b6d4 100%) !important;
+  color: #fff !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.25) inset,
+    0 -2px 0 rgba(0,0,0,0.2) inset,
+    0 8px 20px rgba(16,185,129,0.35),
+    0 2px 4px rgba(0,0,0,0.3) !important;
+  transition: transform 0.2s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.25s, filter 0.2s !important;
+}
+button[class*="bg-primary"]:hover,
+button[class*="bg-accent"]:hover,
+button[data-variant="default"]:hover,
+a[class*="bg-primary"]:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.08);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.3) inset,
+    0 -2px 0 rgba(0,0,0,0.2) inset,
+    0 14px 28px rgba(16,185,129,0.5),
+    0 4px 8px rgba(0,0,0,0.4) !important;
+}
+button[class*="bg-primary"]:active,
+button[data-variant="default"]:active { transform: translateY(0) scale(0.98); }
+
+/* Destructive */
+button[class*="bg-destructive"],
+button[data-variant="destructive"] {
+  background: linear-gradient(135deg, #ef4444 0%, #f43f5e 100%) !important;
+  color: #fff !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.25) inset,
+    0 -2px 0 rgba(0,0,0,0.2) inset,
+    0 8px 20px rgba(239,68,68,0.35) !important;
+}
+
+/* Outline / secondary — glass adapts */
+html.dark button[data-variant="outline"],
+html.dark button[data-variant="secondary"],
+html.dark button[class*="border"][class*="bg-background"] {
+  background: rgba(255,255,255,0.04) !important;
+  border: 1px solid rgba(255,255,255,0.12) !important;
+  color: #f0f6fc !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.05) !important;
+}
+html:not(.dark) button[data-variant="outline"],
+html:not(.dark) button[data-variant="secondary"],
+html:not(.dark) button[class*="border"][class*="bg-background"] {
+  background: rgba(255,255,255,0.6) !important;
+  border: 1px solid rgba(15,23,42,0.1) !important;
+  color: #0f172a !important;
+  box-shadow: 0 4px 12px rgba(15,23,42,0.06), inset 0 1px 0 rgba(255,255,255,0.7) !important;
+}
+button[data-variant="outline"],
+button[data-variant="secondary"] {
+  backdrop-filter: blur(10px);
+  transition: all 0.25s cubic-bezier(0.34,1.56,0.64,1) !important;
+}
+button[data-variant="outline"]:hover,
+button[data-variant="secondary"]:hover {
+  border-color: rgba(56,189,248,0.4) !important;
+  transform: translateY(-2px);
+}
+
+/* Inputs: glassy with neon focus */
+html.dark input, html.dark textarea, html.dark select {
+  background: rgba(13,17,23,0.6) !important;
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  color: #f0f6fc !important;
+}
+html:not(.dark) input,
+html:not(.dark) textarea,
+html:not(.dark) select {
+  background: rgba(255,255,255,0.7) !important;
+  border: 1px solid rgba(15,23,42,0.1) !important;
+  color: #0f172a !important;
+}
+input, textarea, select {
+  backdrop-filter: blur(10px);
+  transition: border-color 0.2s, box-shadow 0.2s !important;
+}
+input:focus, textarea:focus, select:focus {
+  border-color: rgba(16,185,129,0.6) !important;
+  box-shadow: 0 0 0 3px rgba(16,185,129,0.18), 0 0 20px rgba(16,185,129,0.18) !important;
+  outline: none !important;
+}
+
+/* Cards: glass + 3D hover, theme-aware */
+.rounded-lg, .rounded-xl, .rounded-2xl, [class*="rounded-"][class*="border"] {
+  transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.3s, border-color 0.3s;
+}
+html.dark [class*="rounded-"][class*="border"][class*="bg-card"],
+html.dark [class*="rounded-"][class*="border"][class*="bg-background"] {
+  background: linear-gradient(180deg, rgba(30,37,53,0.75) 0%, rgba(22,27,34,0.7) 100%) !important;
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 20px 40px rgba(0,0,0,0.35) !important;
+  color: #f0f6fc;
+}
+html:not(.dark) [class*="rounded-"][class*="border"][class*="bg-card"],
+html:not(.dark) [class*="rounded-"][class*="border"][class*="bg-background"] {
+  background: linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(245,247,251,0.85) 100%) !important;
+  border: 1px solid rgba(15,23,42,0.08) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 12px 32px rgba(15,23,42,0.08) !important;
+  color: #0f172a;
+}
+[class*="rounded-"][class*="border"][class*="bg-card"],
+[class*="rounded-"][class*="border"][class*="bg-background"] {
+  backdrop-filter: blur(16px) saturate(1.3);
+}
+/* Hover lift APENAS em cards de página (não dialogs/modais).
+   Dialogs do Radix são portalados pro <body>, então `main` exclui eles. */
+main [class*="rounded-"][class*="border"][class*="bg-card"]:hover,
+main [class*="rounded-"][class*="border"][class*="bg-background"]:hover {
+  transform: translateY(-3px);
+  border-color: rgba(56,189,248,0.2) !important;
+}
+html.dark main [class*="rounded-"][class*="border"][class*="bg-card"]:hover {
+  box-shadow: 0 1px 0 rgba(255,255,255,0.08) inset, 0 28px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(56,189,248,0.12) !important;
+}
+html:not(.dark) main [class*="rounded-"][class*="border"][class*="bg-card"]:hover {
+  box-shadow: 0 1px 0 rgba(255,255,255,0.8) inset, 0 20px 40px rgba(15,23,42,0.12), 0 0 0 1px rgba(56,189,248,0.18) !important;
+}
+
+/* Dialog/Modal content: nunca aplicar hover-lift (evita loop de re-entrada) */
+[role="dialog"] [class*="rounded-"]:hover,
+[data-radix-popper-content-wrapper] [class*="rounded-"]:hover {
+  transform: none !important;
+}
+
+/* Text utility colors per theme */
+html.dark .text-foreground { color: #f0f6fc !important; }
+html.dark .text-muted-foreground { color: #94a3b8 !important; }
+html:not(.dark) .text-foreground { color: #0f172a !important; }
+html:not(.dark) .text-muted-foreground { color: #475569 !important; }
+.bg-background { background: transparent !important; }
+
+/* Scrollbar */
+html.dark ::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #334155, #1e293b) !important; border-radius: 4px; }
+html:not(.dark) ::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #cbd5e1, #94a3b8) !important; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #10b981, #06b6d4) !important; }
+
+/* ============================================================
+   DIMENSION PARITY — match shell (Contratos / eSocial) exactly
+   ============================================================ */
+html, body, #root { font-size: 14px; line-height: 1.6; }
+
+/* Headings — exact shell values */
+h1 { font-size: 1.75rem !important; font-weight: 700 !important; letter-spacing: -0.025em !important; line-height: 1.2 !important; }
+h2 { font-size: 1.375rem !important; font-weight: 600 !important; letter-spacing: -0.025em !important; }
+h3 { font-size: 1.125rem !important; font-weight: 600 !important; letter-spacing: -0.01em !important; }
+h4 { font-size: 1rem !important; font-weight: 600 !important; }
+
+/* Inputs (shell: padding 9px 12px, 14px, radius 10px) */
+input, textarea, select,
+[data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"],
+button[role="combobox"] {
+  padding: 9px 12px !important;
+  font-size: 0.875rem !important;
+  border-radius: 10px !important;
+  height: auto !important;
+  min-height: 36px;
+}
+textarea { min-height: 72px; }
+
+/* Buttons (shell btn-md: 10px 20px, 14px, radius 8px) */
+button[data-variant], button[data-slot="button"],
+button[class*="bg-primary"], button[class*="bg-destructive"],
+button[class*="bg-secondary"], button[class*="border"][class*="bg-background"] {
+  padding: 10px 20px !important;
+  font-size: 0.875rem !important;
+  border-radius: 8px !important;
+  height: auto !important;
+  min-height: 38px;
+  font-weight: 600 !important;
+}
+/* Small button override (shell btn-sm: 7px 14px, 13px, radius 6px) */
+button[data-size="sm"], button[class*="h-8"] {
+  padding: 7px 14px !important;
+  font-size: 0.8125rem !important;
+  border-radius: 6px !important;
+  min-height: 32px !important;
+}
+/* Icon-only buttons keep their small footprint */
+button[class*="h-9"][class*="w-9"], button[class*="h-8"][class*="w-8"] {
+  padding: 0 !important;
+  width: 36px !important;
+  min-width: 36px !important;
+  min-height: 36px !important;
+}
+
+/* Cards (shell .card: padding 20px, radius 14px) */
+[data-slot="card-content"],
+[data-slot="card"] > div:not([data-slot]) {
+  padding: 20px !important;
+}
+[data-slot="card"], .rounded-lg[class*="border"] {
+  border-radius: 14px !important;
+}
+[data-slot="card-header"] { padding: 20px 20px 0 20px !important; }
+[data-slot="card-footer"] { padding: 0 20px 20px 20px !important; }
+
+/* Tables (shell: th 10px 14px / 12px / 600 / uppercase / tracking 0.06em ; td 10px 14px / 14px) */
+[data-slot="table-head"], th {
+  padding: 10px 14px !important;
+  font-size: 0.75rem !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+  height: auto !important;
+}
+[data-slot="table-cell"], td {
+  padding: 10px 14px !important;
+  font-size: 0.875rem !important;
+}
+
+/* Badges (shell: padding 3px 10px / 11px / radius full / weight 600) */
+[data-slot="badge"], [class*="rounded-full"][class*="text-xs"]:not(button) {
+  padding: 3px 10px !important;
+  font-size: 0.6875rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.02em !important;
+  border-radius: 999px !important;
+}
+
+/* Labels (shell: font-size 0.8125rem, weight 500) */
+label, [data-slot="label"] {
+  font-size: 0.8125rem !important;
+  font-weight: 500 !important;
+}
+
+/* Page container — match shell .page-content (28px 32px, max-width 1400px) */
+main > div { padding: 28px 32px !important; max-width: 1400px !important; margin-left: auto !important; margin-right: auto !important; }
+
+/* Section spacing — shell uses gap 16px on grids; collapse mexican space-y-6 (24) to ~20 */
+.space-y-6 > * + * { margin-top: 20px !important; }
+.space-y-4 > * + * { margin-top: 16px !important; }
+.gap-6 { gap: 16px !important; }
+.gap-4 { gap: 14px !important; }
+.gap-3 { gap: 12px !important; }
+
+/* Catch-all for stat numbers — match shell .stat-card value (1.5rem) */
+.text-3xl { font-size: 1.5rem !important; line-height: 1.2 !important; }
+.text-2xl { font-size: 1.5rem !important; line-height: 1.2 !important; }
+.text-xl  { font-size: 1.25rem !important; line-height: 1.3 !important; }
+.space-y-8 > * + * { margin-top: 20px !important; }
+
+/* CardHeader / CardContent — make sure padding totals match shell .card (20px) */
+[data-slot="card-header"] { padding: 16px 20px 8px 20px !important; }
+[data-slot="card-content"] { padding: 16px 20px 20px 20px !important; }
+[data-slot="card"] { box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important; }
+
+/* Stat number specifically (Dashboard mirroring) */
+[data-slot="card-content"] > .font-bold,
+[data-slot="card-content"] > div.font-bold {
+  font-size: 1.5rem !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.025em !important;
+  line-height: 1.2 !important;
+}
+
+/* ============================================================
+   FIX: Checkboxes & icon-only buttons should NOT inherit 3D primary
+   ============================================================ */
+
+/* Checkboxes — small, neutral box */
+[data-slot="checkbox"], button[role="checkbox"] {
+  width: 18px !important;
+  height: 18px !important;
+  min-height: 18px !important;
+  min-width: 18px !important;
+  padding: 0 !important;
+  border-radius: 4px !important;
+  background: transparent !important;
+  border: 1.5px solid rgba(148,163,184,0.5) !important;
+  box-shadow: none !important;
+  transform: none !important;
+  filter: none !important;
+}
+[data-slot="checkbox"][data-state="checked"],
+button[role="checkbox"][data-state="checked"] {
+  background: linear-gradient(135deg, #10b981, #06b6d4) !important;
+  border-color: transparent !important;
+  color: #fff !important;
+}
+[data-slot="checkbox"]:hover,
+button[role="checkbox"]:hover { transform: none !important; }
+
+/* Icon-only buttons (h-8/h-9 + w-8/w-9) — no neon, just subtle */
+button[class*="h-9"][class*="w-9"],
+button[class*="h-8"][class*="w-8"],
+button[class*="size-icon"],
+button[data-size="icon"] {
+  background: transparent !important;
+  background-image: none !important;
+  border: 1px solid rgba(148,163,184,0.18) !important;
+  color: var(--foreground) !important;
+  box-shadow: none !important;
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  min-height: 32px !important;
+  padding: 0 !important;
+  border-radius: 8px !important;
+  transition: background 0.2s, border-color 0.2s, transform 0.15s !important;
+}
+button[class*="h-9"][class*="w-9"]:hover,
+button[class*="h-8"][class*="w-8"]:hover,
+button[class*="size-icon"]:hover,
+button[data-size="icon"]:hover {
+  background: rgba(148,163,184,0.08) !important;
+  border-color: rgba(148,163,184,0.35) !important;
+  transform: none !important;
+  filter: none !important;
+}
+html:not(.dark) button[class*="h-9"][class*="w-9"],
+html:not(.dark) button[class*="h-8"][class*="w-8"] {
+  border-color: rgba(15,23,42,0.12) !important;
+  color: #475569 !important;
+}
+
+/* Ghost variant — no neon */
+button[data-variant="ghost"] {
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  border: none !important;
+  color: var(--foreground) !important;
+}
+button[data-variant="ghost"]:hover {
+  background: rgba(148,163,184,0.08) !important;
+  transform: none !important;
 }

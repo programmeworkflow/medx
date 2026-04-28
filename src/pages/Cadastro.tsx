@@ -14,7 +14,7 @@ export default function Cadastro() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="font-display text-2xl font-bold">Cadastro</h1>
+        <h1 className="font-display text-[1.75rem] font-bold tracking-tight">Cadastro</h1>
         <p className="text-sm text-muted-foreground">Empresas atendidas e credenciadas parceiras</p>
       </div>
 

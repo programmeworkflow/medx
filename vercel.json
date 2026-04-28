@@ -1,0 +1,15 @@
+{
+  "rewrites": [
+    { "source": "/((?!api/).*)", "destination": "/" }
+  ],
+  "crons": [
+    {
+      "path": "/api/eso/sync-companies",
+      "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/esocial/sync",
+      "schedule": "0 6 * * *"
+    }
+  ]
+}

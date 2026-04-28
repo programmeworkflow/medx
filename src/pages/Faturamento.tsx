@@ -24,6 +24,7 @@ import {
   type Categoria,
 } from "@/lib/api";
 import { supabase } from "@/integrations/supabase/client";
+import ContaAzulPanel from "@/components/ContaAzulPanel";
 
 type SortKey = "nome" | "valor" | "status";
 type SortDir = "asc" | "desc";
@@ -206,9 +207,10 @@ export default function Faturamento() {
 
   return (
     <div className="space-y-6">
+      <ContaAzulPanel />
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="font-display text-2xl font-bold">Faturamento</h1>
+          <h1 className="font-display text-[1.75rem] font-bold tracking-tight">Faturamento</h1>
           <p className="text-sm text-muted-foreground">
             {currentComp ? `${MESES[currentComp.mes - 1]} ${currentComp.ano}` : "Selecione uma competência"} — {stats.concluidos}/{stats.total} concluídos
             {stats.semCadastro > 0 && <span className="text-destructive ml-1">• {stats.semCadastro} sem cadastro</span>}

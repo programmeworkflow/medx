@@ -174,7 +174,7 @@ export default function Importacao() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="font-display text-2xl font-bold">Importação ESO</h1>
+        <h1 className="font-display text-[1.75rem] font-bold tracking-tight">Importação ESO</h1>
         <p className="text-sm text-muted-foreground">Upload da planilha do ESO para gerar faturamento mensal</p>
       </div>
 

@@ -10,7 +10,7 @@ export default function Configuracoes() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="font-display text-2xl font-bold">Configurações</h1>
+        <h1 className="font-display text-[1.75rem] font-bold tracking-tight">Configurações</h1>
         <p className="text-sm text-muted-foreground">Preferências do sistema</p>
       </div>
 

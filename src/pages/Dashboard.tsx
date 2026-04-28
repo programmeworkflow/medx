@@ -64,7 +64,7 @@ export default function Dashboard() {
   if (!currentComp || !stats) {
     return (
       <div className="space-y-6">
-        <h1 className="font-display text-3xl font-bold">Dashboard</h1>
+        <h1 className="font-display text-[1.75rem] font-bold tracking-tight">Dashboard</h1>
         <Card className="border-border/50">
           <CardContent className="py-10 text-center text-muted-foreground">
             Nenhuma competência registrada. Crie uma competência ou importe uma planilha ESO para começar.
@@ -84,10 +84,10 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="font-display text-3xl font-bold text-foreground">Dashboard</h1>
+          <h1 className="font-display text-[1.75rem] font-bold tracking-tight text-foreground">Dashboard</h1>
           <p className="text-muted-foreground mt-1">
             Competência: {stats.mesNome} {currentComp.ano}
           </p>
@@ -102,7 +102,7 @@ export default function Dashboard() {
         </Select>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0 }}>
           <Card className="border-border/50 hover:shadow-lg transition-shadow cursor-pointer" onClick={() => goToFaturamento()}>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -110,7 +110,7 @@ export default function Dashboard() {
               <Building2 className="h-5 w-5 text-primary" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-display font-bold">{stats.total}</div>
+              <div className="text-[1.5rem] font-display font-bold tracking-tight">{stats.total}</div>
               <p className="text-xs text-muted-foreground mt-1">{formatBRL(stats.valorTotal)}</p>
             </CardContent>
           </Card>
@@ -123,7 +123,7 @@ export default function Dashboard() {
               <CheckCircle2 className="h-5 w-5 text-success" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-display font-bold text-success">{stats.concluidos}</div>
+              <div className="text-[1.5rem] font-display font-bold tracking-tight text-success">{stats.concluidos}</div>
               <p className="text-xs text-success/70 mt-1">{formatBRL(stats.valorConcluidos)}</p>
             </CardContent>
           </Card>
@@ -136,7 +136,7 @@ export default function Dashboard() {
               <Clock className="h-5 w-5 text-warning" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-display font-bold text-warning">{stats.pendentes}</div>
+              <div className="text-[1.5rem] font-display font-bold tracking-tight text-warning">{stats.pendentes}</div>
               <p className="text-xs text-warning/70 mt-1">{formatBRL(stats.valorPendentes)}</p>
             </CardContent>
           </Card>
@@ -149,7 +149,7 @@ export default function Dashboard() {
               <AlertTriangle className="h-5 w-5 text-destructive" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-display font-bold text-destructive">{stats.semCadastro}</div>
+              <div className="text-[1.5rem] font-display font-bold tracking-tight text-destructive">{stats.semCadastro}</div>
             </CardContent>
           </Card>
         </motion.div>

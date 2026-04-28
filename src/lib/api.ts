@@ -228,3 +228,116 @@ export async function deleteTreinamento(id: string) {
   const { error } = await supabase.from("treinamentos").delete().eq("id", id);
   if (error) throw error;
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Retenção fiscal — cálculo automático por categoria/valor
+// ────────────────────────────────────────────────────────────────────────────
+export type RetencaoPadrao =
+  | "nenhuma"
+  | "federal"          // CSLL + PIS + COFINS + IRRF (se valor > 666,67)
+  | "iss"              // ISS apenas
+  | "federal_iss"      // tudo
+  | "credenciada_auto"; // regra automática por valor (215, 666,67)
+
+export interface RetencaoCalculada {
+  irrf: boolean;
+  csll: boolean;
+  pis: boolean;
+  cofins: boolean;
+  iss: boolean;
+  // alíquotas
+  irrf_pct: number;
+  csll_pct: number;
+  pis_pct: number;
+  cofins_pct: number;
+  iss_pct: number;
+  // valores em reais
+  irrf_valor: number;
+  csll_valor: number;
+  pis_valor: number;
+  cofins_valor: number;
+  iss_valor: number;
+  total_retido: number;
+  valor_liquido: number;
+}
+
+export const ALIQUOTAS = {
+  irrf: 0.015,    // 1,5%
+  csll: 0.01,     // 1%
+  pis: 0.0065,    // 0,65%
+  cofins: 0.03,   // 3%
+  iss: 0.05,      // 5%
+};
+
+export function calcularRetencao(
+  categoria: string | null | undefined,
+  valor: number,
+  retencaoPadrao: RetencaoPadrao = "nenhuma"
+): RetencaoCalculada {
+  let aplicaIrrf = false;
+  let aplicaCsll = false;
+  let aplicaPis = false;
+  let aplicaCofins = false;
+  let aplicaIss = false;
+
+  // Credenciada: regra automática (Lei 10.833/03 piso R$ 215; IRRF piso R$ 10)
+  if (categoria === "credenciada" || retencaoPadrao === "credenciada_auto") {
+    if (valor > 215) {
+      aplicaCsll = true;
+      aplicaPis = true;
+      aplicaCofins = true;
+      // IRRF só se o valor retido for > R$ 10 → valor > 666,67
+      if (valor * ALIQUOTAS.irrf > 10) aplicaIrrf = true;
+    }
+  } else {
+    // Outras categorias: aplica conforme retencao_padrao do cadastro
+    const aplicaFederal = retencaoPadrao === "federal" || retencaoPadrao === "federal_iss";
+    const aplicaIssFlag = retencaoPadrao === "iss" || retencaoPadrao === "federal_iss";
+    if (aplicaFederal) {
+      aplicaCsll = true;
+      aplicaPis = true;
+      aplicaCofins = true;
+      if (valor * ALIQUOTAS.irrf > 10) aplicaIrrf = true;
+    }
+    if (aplicaIssFlag) aplicaIss = true;
+  }
+
+  const irrf_valor = aplicaIrrf ? valor * ALIQUOTAS.irrf : 0;
+  const csll_valor = aplicaCsll ? valor * ALIQUOTAS.csll : 0;
+  const pis_valor = aplicaPis ? valor * ALIQUOTAS.pis : 0;
+  const cofins_valor = aplicaCofins ? valor * ALIQUOTAS.cofins : 0;
+  const iss_valor = aplicaIss ? valor * ALIQUOTAS.iss : 0;
+  const total_retido = irrf_valor + csll_valor + pis_valor + cofins_valor + iss_valor;
+
+  return {
+    irrf: aplicaIrrf,
+    csll: aplicaCsll,
+    pis: aplicaPis,
+    cofins: aplicaCofins,
+    iss: aplicaIss,
+    irrf_pct: ALIQUOTAS.irrf,
+    csll_pct: ALIQUOTAS.csll,
+    pis_pct: ALIQUOTAS.pis,
+    cofins_pct: ALIQUOTAS.cofins,
+    iss_pct: ALIQUOTAS.iss,
+    irrf_valor: round2(irrf_valor),
+    csll_valor: round2(csll_valor),
+    pis_valor: round2(pis_valor),
+    cofins_valor: round2(cofins_valor),
+    iss_valor: round2(iss_valor),
+    total_retido: round2(total_retido),
+    valor_liquido: round2(valor - total_retido),
+  };
+}
+
+function round2(n: number) {
+  return Math.round(n * 100) / 100;
+}
+
+export const RETENCAO_LABELS: Record<RetencaoPadrao, string> = {
+  nenhuma: "Nenhuma",
+  federal: "Só Federal (CSLL+PIS+COFINS, IRRF se ≥ R$ 666,67)",
+  iss: "Só ISS (5%)",
+  federal_iss: "Federal + ISS",
+  credenciada_auto: "Credenciada (automático por valor)",
+};

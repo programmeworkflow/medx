@@ -71,7 +71,7 @@ export default function ControleCompetencia() {
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <h1 className="font-display text-2xl font-bold">
+            <h1 className="font-display text-[1.75rem] font-bold tracking-tight">
               {MESES[competencia.mes - 1]} {competencia.ano}
             </h1>
             <p className="text-sm text-muted-foreground">{concluidos}/{total} concluídos</p>

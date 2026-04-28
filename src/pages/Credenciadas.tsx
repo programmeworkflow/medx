@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -199,7 +200,7 @@ export default function Credenciadas() {
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="font-display text-xl font-bold">Credenciadas</h2>
+          <h2 className="font-display text-[1.375rem] font-semibold tracking-tight">Credenciadas</h2>
           <p className="text-sm text-muted-foreground">{credenciadas.length} cadastradas</p>
         </div>
         <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setEditingId(null); resetForm(); } }}>
@@ -210,92 +211,114 @@ export default function Credenciadas() {
             <DialogHeader>
               <DialogTitle className="font-display">{editingId ? "Editar Credenciada" : "Cadastrar Credenciada"}</DialogTitle>
             </DialogHeader>
-            <div className="space-y-4 mt-2">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2 col-span-2">
-                  <Label>Nome</Label>
-                  <Input value={nome} onChange={(e) => setNome(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>CNPJ</Label>
-                  <Input value={cnpj} onChange={(e) => setCnpj(e.target.value)} placeholder="00.000.000/0000-00" />
-                </div>
-                <div className="space-y-2">
-                  <Label>E-mail para faturamento</Label>
-                  <Input type="email" value={emailFat} onChange={(e) => setEmailFat(e.target.value)} placeholder="financeiro@credenciada.com" />
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-border p-3 space-y-3">
-                <div className="flex items-center gap-3">
-                  <Switch id="possui-contrato" checked={possuiContrato} onCheckedChange={setPossuiContrato} />
-                  <Label htmlFor="possui-contrato">Possui contrato</Label>
-                </div>
-                {possuiContrato && (
-                  <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-3 mt-2">
+              <Accordion type="multiple" defaultValue={["basicos","contrato"]} className="w-full">
+                <AccordionItem value="basicos">
+                  <AccordionTrigger className="font-display text-sm">Dados básicos</AccordionTrigger>
+                  <AccordionContent className="space-y-4 pt-2">
                     <div className="space-y-2">
-                      <Label>Data do contrato</Label>
-                      <Input type="date" value={dataContrato} onChange={(e) => setDataContrato(e.target.value)} />
+                      <Label>Nome</Label>
+                      <Input value={nome} onChange={(e) => setNome(e.target.value)} />
                     </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <Label>CNPJ</Label>
+                        <Input value={cnpj} onChange={(e) => setCnpj(e.target.value)} placeholder="00.000.000/0000-00" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>E-mail para faturamento</Label>
+                        <Input type="email" value={emailFat} onChange={(e) => setEmailFat(e.target.value)} placeholder="financeiro@credenciada.com" />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Switch id="ativa" checked={ativa} onCheckedChange={setAtiva} />
+                      <Label htmlFor="ativa">Ativa</Label>
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem value="contrato">
+                  <AccordionTrigger className="font-display text-sm">Contrato</AccordionTrigger>
+                  <AccordionContent className="pt-2">
+                    <div className="rounded-lg border border-border p-3 space-y-3">
+                      <div className="flex items-center gap-3">
+                        <Switch id="possui-contrato" checked={possuiContrato} onCheckedChange={setPossuiContrato} />
+                        <Label htmlFor="possui-contrato">Possui contrato</Label>
+                      </div>
+                      {possuiContrato && (
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-2">
+                            <Label>Data do contrato</Label>
+                            <Input type="date" value={dataContrato} onChange={(e) => setDataContrato(e.target.value)} />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Upload do contrato</Label>
+                            <Input type="file" accept=".pdf,.doc,.docx,image/*" onChange={(e) => setContratoFile(e.target.files?.[0] || null)} />
+                            {existingContratoUrl && !contratoFile && (
+                              <button
+                                type="button"
+                                onClick={() => openFile("contratos-credenciadas", existingContratoUrl!)}
+                                className="text-xs text-primary flex items-center gap-1 hover:underline"
+                              >
+                                <FileText className="h-3 w-3" /> Ver contrato atual
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem value="despacho">
+                  <AccordionTrigger className="font-display text-sm">Despacho / endereço</AccordionTrigger>
+                  <AccordionContent className="pt-2">
+                    <div className="rounded-lg border border-border p-3 space-y-3">
+                      <div className="flex items-center gap-3">
+                        <Switch id="envia-correios" checked={enviaCorreios} onCheckedChange={setEnviaCorreios} />
+                        <Label htmlFor="envia-correios">Despacha por Correios</Label>
+                      </div>
+                      {enviaCorreios && (
+                        <div className="grid grid-cols-[1fr,140px] gap-3">
+                          <div className="space-y-2">
+                            <Label>Endereço de despacho</Label>
+                            <Input value={enderecoDespacho} onChange={(e) => setEnderecoDespacho(e.target.value)} placeholder="Rua, número, bairro, cidade/UF" />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>CEP</Label>
+                            <Input value={cep} onChange={(e) => setCep(e.target.value)} placeholder="00000-000" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem value="tabela">
+                  <AccordionTrigger className="font-display text-sm">Tabela de preços</AccordionTrigger>
+                  <AccordionContent className="pt-2">
                     <div className="space-y-2">
-                      <Label>Upload do contrato (PDF)</Label>
-                      <Input type="file" accept=".pdf,.doc,.docx,image/*" onChange={(e) => setContratoFile(e.target.files?.[0] || null)} />
-                      {existingContratoUrl && !contratoFile && (
+                      <Input type="file" accept=".pdf,.xlsx,.xls,.csv,image/*" onChange={(e) => setTabelaPrecoFile(e.target.files?.[0] || null)} />
+                      {existingTabelaPrecoUrl && !tabelaPrecoFile && (
                         <button
                           type="button"
-                          onClick={() => openFile("contratos-credenciadas", existingContratoUrl!)}
+                          onClick={() => openFile("tabelas-preco", existingTabelaPrecoUrl!)}
                           className="text-xs text-primary flex items-center gap-1 hover:underline"
                         >
-                          <FileText className="h-3 w-3" /> Ver contrato atual
+                          <FileText className="h-3 w-3" /> Ver tabela atual
                         </button>
                       )}
                     </div>
-                  </div>
-                )}
-              </div>
+                  </AccordionContent>
+                </AccordionItem>
 
-              <div className="rounded-lg border border-border p-3 space-y-3">
-                <div className="flex items-center gap-3">
-                  <Switch id="envia-correios" checked={enviaCorreios} onCheckedChange={setEnviaCorreios} />
-                  <Label htmlFor="envia-correios">Despacha por Correios</Label>
-                </div>
-                {enviaCorreios && (
-                  <div className="grid grid-cols-[1fr,140px] gap-3">
-                    <div className="space-y-2">
-                      <Label>Endereço de despacho</Label>
-                      <Input value={enderecoDespacho} onChange={(e) => setEnderecoDespacho(e.target.value)} placeholder="Rua, número, bairro, cidade/UF" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>CEP</Label>
-                      <Input value={cep} onChange={(e) => setCep(e.target.value)} placeholder="00000-000" />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Tabela de preços (arquivo)</Label>
-                <Input type="file" accept=".pdf,.xlsx,.xls,.csv,image/*" onChange={(e) => setTabelaPrecoFile(e.target.files?.[0] || null)} />
-                {existingTabelaPrecoUrl && !tabelaPrecoFile && (
-                  <button
-                    type="button"
-                    onClick={() => openFile("tabelas-preco", existingTabelaPrecoUrl!)}
-                    className="text-xs text-primary flex items-center gap-1 hover:underline"
-                  >
-                    <FileText className="h-3 w-3" /> Ver tabela atual
-                  </button>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Observações</Label>
-                <Textarea value={obs} onChange={(e) => setObs(e.target.value)} />
-              </div>
-
-              <div className="flex items-center gap-3">
-                <Switch id="ativa" checked={ativa} onCheckedChange={setAtiva} />
-                <Label htmlFor="ativa">Ativa</Label>
-              </div>
+                <AccordionItem value="obs">
+                  <AccordionTrigger className="font-display text-sm">Observações</AccordionTrigger>
+                  <AccordionContent className="pt-2">
+                    <Textarea value={obs} onChange={(e) => setObs(e.target.value)} placeholder="Notas internas sobre essa credenciada..." />
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
 
               <Button
                 onClick={handleSave}

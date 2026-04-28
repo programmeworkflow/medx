@@ -11,7 +11,9 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Plus, Search, Upload, Download, CheckCircle2, AlertTriangle, Pencil, Trash2, Eye, MessageSquare } from "lucide-react";
+import { Plus, Search, Upload, Download, CheckCircle2, AlertTriangle, Pencil, Trash2, Eye, MessageSquare, SlidersHorizontal, ChevronDown, X } from "lucide-react";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import {
@@ -65,6 +67,8 @@ export default function Empresas() {
   const [vidasEso, setVidasEso] = useState<string>("");
   const [dataFechamentoEspecial, setDataFechamentoEspecial] = useState<string>("");
   const [janelaFechamento, setJanelaFechamento] = useState("");
+  const [retencaoPadrao, setRetencaoPadrao] = useState<string>("nenhuma");
+  const [emitirNfPadrao, setEmitirNfPadrao] = useState<boolean>(false);
 
   const { data: empresas = [], isLoading } = useQuery({
     queryKey: ["empresas"],
@@ -108,6 +112,7 @@ export default function Empresas() {
   const resetForm = () => {
     setNome(""); setCnpj(""); setObs(""); setCategoria("medwork"); setTipo("propria_empresa"); setFatId(""); setAtiva(true);
     setVidasContrato(""); setVidasEso(""); setDataFechamentoEspecial(""); setJanelaFechamento("");
+    setRetencaoPadrao("nenhuma"); setEmitirNfPadrao(false);
   };
 
   const openEdit = (e: Empresa) => {
@@ -123,6 +128,8 @@ export default function Empresas() {
     setVidasEso(e.vidas_eso != null ? String(e.vidas_eso) : "");
     setDataFechamentoEspecial(e.data_fechamento_especial || "");
     setJanelaFechamento(e.janela_fechamento || "");
+    setRetencaoPadrao((e as any).retencao_padrao || "nenhuma");
+    setEmitirNfPadrao(!!(e as any).emitir_nf_padrao);
     setOpen(true);
   };
 
@@ -158,6 +165,8 @@ export default function Empresas() {
       vidas_eso: vidasEso ? parseInt(vidasEso, 10) : null,
       data_fechamento_especial: dataFechamentoEspecial || null,
       janela_fechamento: janelaFechamento || null,
+      retencao_padrao: retencaoPadrao,
+      emitir_nf_padrao: emitirNfPadrao,
     };
 
     if (editingId) {
@@ -272,7 +281,7 @@ export default function Empresas() {
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="font-display text-2xl font-bold">Empresas</h1>
+          <h1 className="font-display text-[1.75rem] font-bold tracking-tight">Empresas</h1>
           <p className="text-sm text-muted-foreground">{empresas.length} cadastradas</p>
         </div>
         <div className="flex gap-2">
@@ -326,105 +335,144 @@ export default function Empresas() {
               <DialogHeader>
                 <DialogTitle className="font-display">{editingId ? "Editar Empresa" : "Cadastrar Empresa"}</DialogTitle>
               </DialogHeader>
-              <div className="space-y-4 mt-2">
-                <div className="space-y-2">
-                  <Label>Nome da Empresa</Label>
-                  <Input value={nome} onChange={(e) => setNome(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>CNPJ</Label>
-                  <Input value={cnpj} onChange={(e) => setCnpj(e.target.value)} placeholder="00.000.000/0000-00" />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Categoria</Label>
-                    <Select value={categoria} onValueChange={(v) => setCategoria(v as Categoria)}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {categorias.map((c) => (
-                          <SelectItem key={c} value={c}>{CATEGORIA_LABELS[c]}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Status</Label>
-                    <Select value={ativa ? "ativa" : "inativa"} onValueChange={(v) => setAtiva(v === "ativa")}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ativa">Ativa</SelectItem>
-                        <SelectItem value="inativa">Inativa</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Tipo de Faturamento</Label>
-                  <Select value={tipo} onValueChange={(v) => setTipo(v as TipoFaturamento)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="propria_empresa">Própria Empresa</SelectItem>
-                      <SelectItem value="outra_empresa">Outra Empresa</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {tipo === "outra_empresa" && (
-                  <div className="space-y-2">
-                    <Label>Empresa Faturadora</Label>
-                    <Select value={fatId} onValueChange={setFatId}>
-                      <SelectTrigger><SelectValue placeholder="Selecionar..." /></SelectTrigger>
-                      <SelectContent>
-                        {empresas.map((e) => (
-                          <SelectItem key={e.id} value={e.id}>{e.nome_empresa}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Vidas inclusas no Contrato</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      value={vidasContrato}
-                      onChange={(e) => setVidasContrato(e.target.value)}
-                      placeholder="Ex: 50"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Vidas no ESO</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      value={vidasEso}
-                      onChange={(e) => setVidasEso(e.target.value)}
-                      placeholder="Ex: 48"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Data especial de fechamento</Label>
-                    <Input
-                      type="date"
-                      value={dataFechamentoEspecial}
-                      onChange={(e) => setDataFechamentoEspecial(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Janela de fechamento</Label>
-                    <Input
-                      value={janelaFechamento}
-                      onChange={(e) => setJanelaFechamento(e.target.value)}
-                      placeholder='Ex: "do dia 20 ao dia 20"'
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Observações</Label>
-                  <Textarea value={obs} onChange={(e) => setObs(e.target.value)} />
-                </div>
+              <div className="space-y-3 mt-2">
+                <Accordion type="multiple" defaultValue={["basicos","faturamento"]} className="w-full">
+                  <AccordionItem value="basicos">
+                    <AccordionTrigger className="font-display text-sm">Dados básicos</AccordionTrigger>
+                    <AccordionContent className="space-y-4 pt-2">
+                      <div className="space-y-2">
+                        <Label>Nome da Empresa</Label>
+                        <Input value={nome} onChange={(e) => setNome(e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>CNPJ</Label>
+                        <Input value={cnpj} onChange={(e) => setCnpj(e.target.value)} placeholder="00.000.000/0000-00" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <Label>Categoria</Label>
+                          <Select value={categoria} onValueChange={(v) => setCategoria(v as Categoria)}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {categorias.map((c) => (
+                                <SelectItem key={c} value={c}>{CATEGORIA_LABELS[c]}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Status</Label>
+                          <Select value={ativa ? "ativa" : "inativa"} onValueChange={(v) => setAtiva(v === "ativa")}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="ativa">Ativa</SelectItem>
+                              <SelectItem value="inativa">Inativa</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="faturamento">
+                    <AccordionTrigger className="font-display text-sm">Faturamento</AccordionTrigger>
+                    <AccordionContent className="space-y-4 pt-2">
+                      <div className="space-y-2">
+                        <Label>Tipo de Faturamento</Label>
+                        <Select value={tipo} onValueChange={(v) => setTipo(v as TipoFaturamento)}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="propria_empresa">Própria Empresa</SelectItem>
+                            <SelectItem value="outra_empresa">Outra Empresa</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {tipo === "outra_empresa" && (
+                        <div className="space-y-2">
+                          <Label>Empresa Faturadora</Label>
+                          <Select value={fatId} onValueChange={setFatId}>
+                            <SelectTrigger><SelectValue placeholder="Selecionar..." /></SelectTrigger>
+                            <SelectContent>
+                              {empresas.map((e) => (
+                                <SelectItem key={e.id} value={e.id}>{e.nome_empresa}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="contrato">
+                    <AccordionTrigger className="font-display text-sm">Contrato e vidas</AccordionTrigger>
+                    <AccordionContent className="space-y-4 pt-2">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <Label>Vidas inclusas no Contrato</Label>
+                          <Input type="number" min={0} value={vidasContrato} onChange={(e) => setVidasContrato(e.target.value)} placeholder="Ex: 50" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Vidas no ESO</Label>
+                          <Input type="number" min={0} value={vidasEso} onChange={(e) => setVidasEso(e.target.value)} placeholder="Ex: 48" />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <Label>Data especial de fechamento</Label>
+                          <Input type="date" value={dataFechamentoEspecial} onChange={(e) => setDataFechamentoEspecial(e.target.value)} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Janela de fechamento</Label>
+                          <Input value={janelaFechamento} onChange={(e) => setJanelaFechamento(e.target.value)} placeholder='Ex: "do dia 20 ao dia 20"' />
+                        </div>
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="retencao">
+                    <AccordionTrigger className="font-display text-sm">Retenção fiscal & NF (Conta Azul)</AccordionTrigger>
+                    <AccordionContent className="space-y-4 pt-2">
+                      <div className="space-y-2">
+                        <Label>Retenção padrão</Label>
+                        <Select value={retencaoPadrao} onValueChange={setRetencaoPadrao}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="nenhuma">Nenhuma</SelectItem>
+                            <SelectItem value="federal">Só Federal (CSLL+PIS+COFINS, IRRF se ≥ R$ 666,67)</SelectItem>
+                            <SelectItem value="iss">Só ISS (5%)</SelectItem>
+                            <SelectItem value="federal_iss">Federal + ISS</SelectItem>
+                            <SelectItem value="credenciada_auto">Credenciada (automático por valor)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Pra credenciadas com regra automática: se valor ≤ R$ 215 não retém; acima retém CSLL+PIS+COFINS; se valor ≥ R$ 666,67 retém também IRRF.
+                        </p>
+                      </div>
+                      <label className="flex items-start gap-2 cursor-pointer p-3 rounded-lg border border-border">
+                        <input
+                          type="checkbox"
+                          checked={emitirNfPadrao}
+                          onChange={(e) => setEmitirNfPadrao(e.target.checked)}
+                          className="mt-0.5"
+                        />
+                        <div className="flex-1">
+                          <div className="text-sm font-medium">Emitir NF por padrão</div>
+                          <div className="text-xs text-muted-foreground">
+                            Ao faturar essa empresa em massa, a opção "Emitir NF" vem marcada automaticamente.
+                          </div>
+                        </div>
+                      </label>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="obs">
+                    <AccordionTrigger className="font-display text-sm">Observações</AccordionTrigger>
+                    <AccordionContent className="pt-2">
+                      <Textarea value={obs} onChange={(e) => setObs(e.target.value)} placeholder="Notas internas sobre essa empresa..." />
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
+
                 <Button onClick={handleSave} className="w-full" disabled={insertMutation.isPending || updateMutation.isPending}>
                   {(insertMutation.isPending || updateMutation.isPending) ? "Salvando..." : editingId ? "Atualizar Empresa" : "Salvar Empresa"}
                 </Button>

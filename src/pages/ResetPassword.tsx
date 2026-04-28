@@ -56,7 +56,7 @@ export default function ResetPassword() {
         <Card className="relative z-10 w-full max-w-[420px] border-border/50 shadow-2xl">
           <CardContent className="px-8 py-8 text-center">
             <img src={logo} alt="MedX" className="mx-auto mb-4 h-16 w-auto" />
-            <h1 className="font-display text-2xl font-bold text-foreground">Link inválido ou expirado</h1>
+            <h1 className="font-display text-[1.75rem] font-bold tracking-tight text-foreground">Link inválido ou expirado</h1>
             <p className="mt-2 text-sm text-muted-foreground">
               Solicite um novo link na tela de login para redefinir sua senha.
             </p>
@@ -124,7 +124,7 @@ export default function ResetPassword() {
         <CardContent className="px-8 py-8">
           <div className="mb-8 flex flex-col items-center">
             <img src={logo} alt="MedX" className="mb-4 h-16 w-auto" />
-            <h1 className="font-display text-2xl font-bold text-foreground">Redefinir senha</h1>
+            <h1 className="font-display text-[1.75rem] font-bold tracking-tight text-foreground">Redefinir senha</h1>
             <p className="mt-1 text-center text-sm text-muted-foreground">
               Digite sua nova senha para recuperar o acesso.
             </p>

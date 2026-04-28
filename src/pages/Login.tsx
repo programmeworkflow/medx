@@ -92,7 +92,7 @@ export default function Login() {
           <CardContent className="px-8 pb-8 pt-8">
             <div className="mb-8 flex flex-col items-center">
               <img src={logo} alt="MedX" className="mb-4 h-16 w-auto" />
-              <h1 className="font-display text-2xl font-bold text-foreground">MedX</h1>
+              <h1 className="font-display text-[1.75rem] font-bold tracking-tight text-foreground">MedX</h1>
               <p className="mt-1 text-sm text-muted-foreground">Gestão de Faturamento</p>
             </div>
 

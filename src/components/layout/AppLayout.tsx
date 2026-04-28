@@ -17,11 +17,16 @@ export default function AppLayout() {
     return <Navigate to="/login" replace />;
   }
 
+  const isEmbedded =
+    typeof window !== "undefined" &&
+    (window.self !== window.top ||
+      new URLSearchParams(window.location.search).get("embed") === "1");
+
   return (
     <div className="flex min-h-screen bg-background">
-      <AppSidebar />
+      {!isEmbedded && <AppSidebar />}
       <main className="flex-1 overflow-auto">
-        <div className="p-6 lg:p-8 max-w-7xl mx-auto">
+        <div className="px-7 py-7 lg:px-8 lg:py-7 max-w-[1400px] mx-auto">
           <Outlet />
         </div>
       </main>
