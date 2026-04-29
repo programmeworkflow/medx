@@ -441,10 +441,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (body.emitir_boleto && vendaId) {
         try {
-          const info = await caBffSession(
-            "GET",
-            `https://services.contaazul.com/contaazul-bff/sale/v1/sales/${vendaId}`
-          );
+          // Retry pra esperar a CA popular financialEvent.installments com UUIDs
+          // (pode demorar alguns segundos após /v1/venda criar a venda)
+          let info: any = null;
+          let inst: any[] = [];
+          for (let attempt = 0; attempt < 5; attempt++) {
+            if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
+            info = await caBffSession(
+              "GET",
+              `https://services.contaazul.com/contaazul-bff/sale/v1/sales/${vendaId}`
+            );
+            if (info.ok) {
+              inst =
+                info.data?.financialEvent?.paymentCondition?.installments ||
+                info.data?.financialEvents?.[0]?.paymentCondition?.installments ||
+                [];
+              if (inst.length && inst[0]?.id) break;
+            }
+          }
           if (!info.ok) {
             throw new Error(`lookup BFF ${info.status}: ${info.text?.slice(0, 150)}`);
           }
