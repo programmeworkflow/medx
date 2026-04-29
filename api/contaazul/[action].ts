@@ -336,13 +336,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
       });
 
+      // Estratégia pra escolher próximo número da venda:
+      // 1. Lê maior numero salvo no banco local (vendas criadas via MedX)
+      // 2. Compara com env CONTA_AZUL_NUMERO_VENDA_INICIAL (limite mínimo)
+      // 3. Filtra sanity: ignora numeros >= 1_000_000 (foram setados errados)
+      // 4. Tenta com (base + 1)
+      // 5. Se CA rejeita "nº NNN é o próximo", usa NNN
+      const sb = supaAdmin();
+      const { data: prevVendas } = await sb
+        .from("contaazul_vendas")
+        .select("raw")
+        .not("raw", "is", null)
+        .limit(200);
+      let lastNumero = 0;
+      for (const v of prevVendas || []) {
+        const n = Number(v.raw?.venda?.numero);
+        if (n > 0 && n < 1_000_000 && n > lastNumero) lastNumero = n;
+      }
+      const envBase = Number(process.env.CONTA_AZUL_NUMERO_VENDA_INICIAL || 0);
+      const base = Math.max(lastNumero, envBase, 0);
+      const tentativaInicial = base + 1;
+
       let venda: any;
       try {
-        // Começa com número alto pra garantir que a CA rejeite com a mensagem
-        // "O nº NNN é o próximo disponível" — daí pegamos o próximo correto.
-        // (Se enviarmos 1 e estiver vazio, a CA aceita e cria com numero=1 fora
-        // de sequência — estraga a numeração de produção.)
-        venda = await caApi("POST", "/v1/venda", buildPayload(999999999));
+        venda = await caApi("POST", "/v1/venda", buildPayload(tentativaInicial));
       } catch (err: any) {
         const m = String(err?.message || "").match(/nº\s+(\d+)/);
         if (!m) throw err;
