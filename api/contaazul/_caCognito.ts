@@ -8,8 +8,14 @@ import { supaAdmin, encryptSecret, decryptSecret } from "../esocial/_lib.js";
 
 const COGNITO_REGION = "sa-east-1";
 const COGNITO_URL = `https://cognito-idp.${COGNITO_REGION}.amazonaws.com/`;
-const CLIENT_ID = process.env.CONTA_AZUL_CLIENT_ID || "";
-const CLIENT_SECRET = process.env.CONTA_AZUL_CLIENT_SECRET || "";
+// O client Cognito que a UI web da CA usa — emite AccessToken de 24h e suporta
+// refresh sem SECRET_HASH (public client, sem secret). O client OAuth2
+// (CONTA_AZUL_CLIENT_ID) emite tokens de 1h e refresh falha pós-MFA.
+const CLIENT_ID =
+  process.env.CONTA_AZUL_COGNITO_CLIENT_ID || "3189s90f7qd59smn0r9vua6ld8";
+// O client público da UI não tem secret. Mas mantemos o secret do OAuth2 caso
+// alguém use um client custom com secret.
+const CLIENT_SECRET = process.env.CONTA_AZUL_COGNITO_CLIENT_SECRET || "";
 const TOTP_SECRET = (process.env.CONTA_AZUL_TOTP_SECRET || "").replace(/\s+/g, "").toUpperCase();
 
 // RFC 6238 TOTP — base32 seed → código de 6 dígitos válido por 30s
@@ -52,11 +58,19 @@ interface SessionTokens {
   email: string;
 }
 
-function secretHash(username: string) {
+function secretHash(username: string): string | null {
+  // Client público (sem secret) não usa SECRET_HASH. Retorna null pra omitir.
+  if (!CLIENT_SECRET) return null;
   return crypto
     .createHmac("sha256", CLIENT_SECRET)
     .update(username + CLIENT_ID)
     .digest("base64");
+}
+
+function withSecretHash(params: Record<string, string>, username: string) {
+  const sh = secretHash(username);
+  if (sh) params.SECRET_HASH = sh;
+  return params;
 }
 
 function jwtExpiry(jwt: string): number {
@@ -91,11 +105,7 @@ async function loginPassword(email: string, senha: string): Promise<SessionToken
   const r: any = await cognitoCall("InitiateAuth", {
     AuthFlow: "USER_PASSWORD_AUTH",
     ClientId: CLIENT_ID,
-    AuthParameters: {
-      USERNAME: email,
-      PASSWORD: senha,
-      SECRET_HASH: secretHash(email),
-    },
+    AuthParameters: withSecretHash({ USERNAME: email, PASSWORD: senha }, email),
   });
 
   // Resposta direta sem MFA
@@ -123,11 +133,10 @@ async function loginPassword(email: string, senha: string): Promise<SessionToken
       ChallengeName: "SOFTWARE_TOKEN_MFA",
       ClientId: CLIENT_ID,
       Session: r.Session,
-      ChallengeResponses: {
-        USERNAME: username,
-        SOFTWARE_TOKEN_MFA_CODE: code,
-        SECRET_HASH: secretHash(username),
-      },
+      ChallengeResponses: withSecretHash(
+        { USERNAME: username, SOFTWARE_TOKEN_MFA_CODE: code },
+        username
+      ),
     });
     const a = r2?.AuthenticationResult;
     if (!a) {
@@ -153,10 +162,7 @@ async function refreshTokens(email: string, refreshToken: string): Promise<Sessi
   const r: any = await cognitoCall("InitiateAuth", {
     AuthFlow: "REFRESH_TOKEN_AUTH",
     ClientId: CLIENT_ID,
-    AuthParameters: {
-      REFRESH_TOKEN: refreshToken,
-      SECRET_HASH: secretHash(email),
-    },
+    AuthParameters: withSecretHash({ REFRESH_TOKEN: refreshToken }, email),
   });
   const a = r?.AuthenticationResult;
   if (!a) throw new Error("Refresh não retornou AuthenticationResult");
@@ -295,11 +301,7 @@ export async function cognitoLoginInteractive(
   const r: any = await cognitoCall("InitiateAuth", {
     AuthFlow: "USER_PASSWORD_AUTH",
     ClientId: CLIENT_ID,
-    AuthParameters: {
-      USERNAME: email,
-      PASSWORD: senha,
-      SECRET_HASH: secretHash(email),
-    },
+    AuthParameters: withSecretHash({ USERNAME: email, PASSWORD: senha }, email),
   });
 
   let auth = r?.AuthenticationResult;
@@ -314,11 +316,10 @@ export async function cognitoLoginInteractive(
       ChallengeName: "SOFTWARE_TOKEN_MFA",
       ClientId: CLIENT_ID,
       Session: r.Session,
-      ChallengeResponses: {
-        USERNAME: username,
-        SOFTWARE_TOKEN_MFA_CODE: totpCode,
-        SECRET_HASH: secretHash(username),
-      },
+      ChallengeResponses: withSecretHash(
+        { USERNAME: username, SOFTWARE_TOKEN_MFA_CODE: totpCode },
+        username
+      ),
     });
     auth = r2?.AuthenticationResult;
     if (!auth) {
@@ -404,50 +405,22 @@ export async function cognitoRefresh(): Promise<CognitoSession> {
     deviceKey = payload.device_key || "";
   } catch {}
 
-  // Tenta variações até alguma funcionar — o app client da CA pode aceitar
-  // só DEVICE_KEY, ou só SECRET_HASH, ou ambos. Erro "does not support refresh
-  // token rotation" indica que algum parâmetro tá errado pra esse client.
-  const tentativas: Array<Record<string, string>> = [
-    // 1. Padrão (todos)
-    {
-      REFRESH_TOKEN: cur.refresh_token,
-      SECRET_HASH: secretHash(cur.email),
-      ...(deviceKey ? { DEVICE_KEY: deviceKey } : {}),
-    },
-    // 2. Sem SECRET_HASH (alguns clients sem secret rejeitam)
-    {
-      REFRESH_TOKEN: cur.refresh_token,
-      ...(deviceKey ? { DEVICE_KEY: deviceKey } : {}),
-    },
-    // 3. Sem DEVICE_KEY
-    {
-      REFRESH_TOKEN: cur.refresh_token,
-      SECRET_HASH: secretHash(cur.email),
-    },
-    // 4. Só refresh
-    {
-      REFRESH_TOKEN: cur.refresh_token,
-    },
-  ];
+  // Public client (sem secret) precisa só REFRESH_TOKEN + DEVICE_KEY (se houver).
+  // Confidential client precisa SECRET_HASH também — withSecretHash omite quando
+  // CLIENT_SECRET tá vazio.
+  const params = withSecretHash({ REFRESH_TOKEN: cur.refresh_token }, cur.email);
+  if (deviceKey) params.DEVICE_KEY = deviceKey;
 
-  let lastErr: string | null = null;
-  for (const params of tentativas) {
-    try {
-      const r: any = await cognitoCall("InitiateAuth", {
-        AuthFlow: "REFRESH_TOKEN_AUTH",
-        ClientId: CLIENT_ID,
-        AuthParameters: params,
-      });
-      const a = r?.AuthenticationResult;
-      if (a?.AccessToken) {
-        return saveCognitoSession(cur.email, a.AccessToken, a.RefreshToken || cur.refresh_token, cur.session_id);
-      }
-      lastErr = `sem AccessToken: ${JSON.stringify(r).slice(0, 200)}`;
-    } catch (err: any) {
-      lastErr = err?.message || "erro desconhecido";
-    }
+  const r: any = await cognitoCall("InitiateAuth", {
+    AuthFlow: "REFRESH_TOKEN_AUTH",
+    ClientId: CLIENT_ID,
+    AuthParameters: params,
+  });
+  const a = r?.AuthenticationResult;
+  if (!a?.AccessToken) {
+    throw new Error(`Refresh falhou: ${JSON.stringify(r).slice(0, 250)}`);
   }
-  throw new Error(`Refresh falhou em todas as tentativas: ${lastErr}`);
+  return saveCognitoSession(cur.email, a.AccessToken, a.RefreshToken || cur.refresh_token, cur.session_id);
 }
 
 export async function cognitoStatus() {
