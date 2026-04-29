@@ -75,7 +75,6 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
   const { data: empresas = [] } = useQuery({ queryKey: ["empresas"], queryFn: fetchEmpresas, enabled: open });
   const empresasById = useMemo(() => new Map(empresas.map((e: any) => [e.id, e])), [empresas]);
 
-  const [centroCustoPadrao, setCentroCustoPadrao] = useState<string>("");
   const [servicoPadrao, setServicoPadrao] = useState<string>("");
   // Mês de referência padrão = mês da competência aberta (ou mês anterior)
   const hojeBatch = new Date();
@@ -103,17 +102,10 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
     if (compAtual?.ano) setAnoRefBatch(compAtual.ano);
   }, [compAtual?.mes, compAtual?.ano]);
 
-  // Default centro custo = primeiro com "EXAMES" no nome
+  // Constroi as linhas a partir dos faturamentos pendentes — centro de custo
+  // vem do cadastro da empresa (configurado em Cadastros → Empresas)
   useEffect(() => {
-    if (centros.length && !centroCustoPadrao) {
-      const exames = centros.find((c) => /exam/i.test(c.nome));
-      setCentroCustoPadrao(exames?.id || centros[0].id);
-    }
-  }, [centros, centroCustoPadrao]);
-
-  // Constroi as linhas a partir dos faturamentos pendentes
-  useEffect(() => {
-    if (!faturamentos.length || !centroCustoPadrao) return;
+    if (!faturamentos.length) return;
     const novas: Linha[] = (faturamentos as any[])
       .filter((f) => f.status === "pendente" || f.status === "sem_cadastro")
       .map((f) => {
@@ -132,24 +124,19 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
           valor: Number(f.valor) || 0,
           semCadastro,
           selected: !semCadastro,
-          centroCustoId: centroCustoPadrao,
+          centroCustoId: empresa?.centro_custo_id || "",
           retencao: retPadrao,
           emitirNF: !!empresa?.emitir_nf_padrao,
           emitirBoleto: false,
         };
       });
     setLinhas(novas);
-  }, [faturamentos, empresasById, centroCustoPadrao]);
+  }, [faturamentos, empresasById]);
 
   const semCadastroList = linhas.filter((l) => l.semCadastro);
   const validas = linhas.filter((l) => !l.semCadastro);
   const selecionadas = validas.filter((l) => l.selected);
   const totalSelecionado = selecionadas.reduce((s, l) => s + l.valor, 0);
-
-  const aplicarCentroCustoTodas = (id: string) => {
-    setCentroCustoPadrao(id);
-    setLinhas((prev) => prev.map((l) => ({ ...l, centroCustoId: id })));
-  };
 
   const toggleAll = (checked: boolean) => {
     setLinhas((prev) => prev.map((l) => (l.semCadastro ? l : { ...l, selected: checked })));
@@ -246,17 +233,6 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
 
         <div className="flex items-center gap-3 flex-wrap py-2">
           <div className="flex items-center gap-2">
-            <Label className="text-xs">Centro de custo padrão:</Label>
-            <Select value={centroCustoPadrao} onValueChange={aplicarCentroCustoTodas}>
-              <SelectTrigger className="w-[260px] h-8"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {centros.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-center gap-2">
             <Label className="text-xs">Serviço:</Label>
             <Select value={servicoPadrao} onValueChange={setServicoPadrao}>
               <SelectTrigger className="w-[260px] h-8">
@@ -306,7 +282,6 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
                 <TableHead>Empresa</TableHead>
                 <TableHead>CNPJ</TableHead>
                 <TableHead className="text-right">Valor</TableHead>
-                <TableHead>Centro custo</TableHead>
                 <TableHead>Retenção</TableHead>
                 <TableHead className="text-center">NF</TableHead>
                 <TableHead className="text-center">Boleto</TableHead>
@@ -332,19 +307,6 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
                   </TableCell>
                   <TableCell className="font-mono text-xs">{formatCnpjCpf(l.cnpj)}</TableCell>
                   <TableCell className="text-right">{fmtBRL(l.valor)}</TableCell>
-                  <TableCell>
-                    <Select
-                      value={l.centroCustoId}
-                      onValueChange={(v) => updateLinha(l.faturamentoId, { centroCustoId: v })}
-                    >
-                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {centros.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
                   <TableCell>
                     <Select
                       value={l.retencao}
@@ -378,7 +340,7 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
               ))}
               {linhas.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                     Nenhum faturamento pendente para a competência atual.
                   </TableCell>
                 </TableRow>

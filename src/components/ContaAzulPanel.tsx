@@ -56,7 +56,6 @@ export default function ContaAzulPanel() {
 
   // form fields
   const [empresaId, setEmpresaId] = useState<string>("");
-  const [centroCustoId, setCentroCustoId] = useState<string>("");
   const [servicoId, setServicoId] = useState<string>("");
   const [valor, setValor] = useState("");
   const [dataVenda, setDataVenda] = useState(new Date().toISOString().slice(0, 10));
@@ -218,9 +217,14 @@ export default function ContaAzulPanel() {
   const handleCreateSale = async () => {
     const empresa = empresas.find((e) => e.id === empresaId);
     if (!empresa) return toast.error("Selecione uma empresa");
-    if (!centroCustoId) return toast.error("Selecione o centro de custo");
     if (!servicoId) return toast.error("Selecione o serviço");
     if (!valor) return toast.error("Informe o valor");
+    const empresaCC = (empresa as any).centro_custo_id;
+    if (!empresaCC) {
+      return toast.error(
+        `Empresa "${empresa.nome_empresa}" sem centro de custo cadastrado. Configure em Cadastros → Empresas.`
+      );
+    }
     const observacaoFinal = obs;
     setSubmitting(true);
     try {
@@ -230,7 +234,7 @@ export default function ContaAzulPanel() {
         body: JSON.stringify({
           cnpj: empresa.cnpj,
           razao_social: empresa.nome_empresa,
-          centro_custo_id: centroCustoId,
+          centro_custo_id: empresaCC,
           servico_id: servicoId,
           servico: servicoSelecionado?.nome || "Serviço",
           valor: Number(valor.replace(",", ".")),
@@ -252,7 +256,7 @@ export default function ContaAzulPanel() {
       else if (j?.boleto?.status === "erro") partes.push(`boleto erro: ${j.boleto.erro || "?"}`);
       toast.success(partes.join(" — "));
       setOpen(false);
-      setServicoId(""); setValor(""); setObs(""); setEmitirNF(false); setEmitirBoleto(false); setCentroCustoId("");
+      setServicoId(""); setValor(""); setObs(""); setEmitirNF(false); setEmitirBoleto(false);
     } catch (e: any) {
       toast.error(`${e?.message}`);
     } finally {
@@ -410,17 +414,6 @@ export default function ContaAzulPanel() {
                         <SelectItem key={e.id} value={e.id}>
                           {e.nome_empresa} ({formatCnpjCpf(e.cnpj)})
                         </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Centro de custo</Label>
-                  <Select value={centroCustoId} onValueChange={setCentroCustoId}>
-                    <SelectTrigger><SelectValue placeholder="Selecionar..." /></SelectTrigger>
-                    <SelectContent>
-                      {centros.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

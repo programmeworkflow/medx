@@ -70,6 +70,16 @@ export default function Empresas() {
   const [janelaFechamento, setJanelaFechamento] = useState("");
   const [retencaoPadrao, setRetencaoPadrao] = useState<string>("nenhuma");
   const [emitirNfPadrao, setEmitirNfPadrao] = useState<boolean>(false);
+  const [centroCustoId, setCentroCustoId] = useState<string>("");
+
+  const { data: centrosCusto = [] } = useQuery({
+    queryKey: ["ca-centros-custo"],
+    queryFn: async () => {
+      const r = await fetch("/api/contaazul/cost-centers");
+      const j = await r.json();
+      return (j?.items as { id: string; nome: string }[]) || [];
+    },
+  });
 
   const { data: empresas = [], isLoading } = useQuery({
     queryKey: ["empresas"],
@@ -114,6 +124,7 @@ export default function Empresas() {
     setNome(""); setCnpj(""); setObs(""); setCategoria("medwork"); setTipo("propria_empresa"); setFatId(""); setAtiva(true);
     setVidasContrato(""); setVidasEso(""); setDataFechamentoEspecial(""); setJanelaFechamento("");
     setRetencaoPadrao("nenhuma"); setEmitirNfPadrao(false);
+    setCentroCustoId("");
   };
 
   const openEdit = (e: Empresa) => {
@@ -131,6 +142,7 @@ export default function Empresas() {
     setJanelaFechamento(e.janela_fechamento || "");
     setRetencaoPadrao((e as any).retencao_padrao || "nenhuma");
     setEmitirNfPadrao(!!(e as any).emitir_nf_padrao);
+    setCentroCustoId((e as any).centro_custo_id || "");
     setOpen(true);
   };
 
@@ -177,6 +189,7 @@ export default function Empresas() {
       janela_fechamento: janelaFechamento || null,
       retencao_padrao: retencaoPadrao,
       emitir_nf_padrao: emitirNfPadrao,
+      centro_custo_id: centroCustoId || null,
     };
 
     if (editingId) {
@@ -452,6 +465,22 @@ export default function Empresas() {
                   <AccordionItem value="retencao">
                     <AccordionTrigger className="font-display text-sm">Retenção fiscal & NF (Conta Azul)</AccordionTrigger>
                     <AccordionContent className="space-y-4 pt-2">
+                      <div className="space-y-2">
+                        <Label>Centro de custo (Conta Azul)</Label>
+                        <Select value={centroCustoId} onValueChange={setCentroCustoId}>
+                          <SelectTrigger>
+                            <SelectValue placeholder={centrosCusto.length ? "Selecionar..." : "Carregando..."} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {centrosCusto.map((c) => (
+                              <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Usado automaticamente quando faturar essa empresa na Conta Azul.
+                        </p>
+                      </div>
                       <div className="space-y-2">
                         <Label>Retenção padrão</Label>
                         <Select value={retencaoPadrao} onValueChange={setRetencaoPadrao}>
