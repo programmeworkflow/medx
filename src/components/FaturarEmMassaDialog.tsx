@@ -150,8 +150,20 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
     if (selecionadas.length === 0) return toast.error("Nenhuma linha selecionada");
     if (!servicoPadrao) return toast.error("Selecione o serviço");
     const servicoNomeRaw = servicos.find((s) => s.id === servicoPadrao)?.nome || "Serviço";
-    // Remove sufixo técnico entre parênteses (ex: "(Sem Retenção de ISS)")
-    const servicoNome = servicoNomeRaw.replace(/\s*\([^)]*\)\s*$/g, "").trim();
+    // Mapeia nome técnico do CA pra rótulo curto na observação da NF
+    // (ex: "EXAMES OCUPACIONAIS (Sem Retenção de ISS)" → "Exames")
+    const NOMES_AMIGAVEIS: { match: RegExp; out: string }[] = [
+      { match: /exame/i, out: "Exames" },
+      { match: /treinamento/i, out: "Treinamentos" },
+      { match: /pcmso/i, out: "PCMSO" },
+      { match: /pgr/i, out: "PGR" },
+      { match: /elabora.*documento/i, out: "Documentos" },
+      { match: /gest.o.*sst/i, out: "Gestão de SST" },
+      { match: /assessoria.*sst/i, out: "Assessoria de SST" },
+    ];
+    const limpo = servicoNomeRaw.replace(/\s*\([^)]*\)\s*$/g, "").trim();
+    const servicoNome =
+      NOMES_AMIGAVEIS.find((r) => r.match.test(limpo))?.out || limpo;
     setProgress({ done: 0, total: selecionadas.length });
     let ok = 0;
     let fail = 0;

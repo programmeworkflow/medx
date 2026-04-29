@@ -94,10 +94,22 @@ export default function ContaAzulPanel() {
     "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
   ];
   const servicoSelecionado = servicos.find((s) => s.id === servicoId);
-  // Limpa sufixo entre parênteses (ex: "EXAMES OCUPACIONAIS (Sem Retenção de ISS)"
-  // → "EXAMES OCUPACIONAIS") pra observação ficar limpa na NF
-  const limparNomeServico = (nome: string) =>
-    nome.replace(/\s*\([^)]*\)\s*$/g, "").trim();
+  // Mapeia o nome técnico do CA pra rótulo curto na observação da NF
+  // (ex: "EXAMES OCUPACIONAIS (Sem Retenção de ISS)" → "Exames")
+  const NOMES_AMIGAVEIS: { match: RegExp; out: string }[] = [
+    { match: /exame/i, out: "Exames" },
+    { match: /treinamento/i, out: "Treinamentos" },
+    { match: /pcmso/i, out: "PCMSO" },
+    { match: /pgr/i, out: "PGR" },
+    { match: /elabora.*documento/i, out: "Documentos" },
+    { match: /gest.o.*sst/i, out: "Gestão de SST" },
+    { match: /assessoria.*sst/i, out: "Assessoria de SST" },
+  ];
+  const limparNomeServico = (nome: string) => {
+    const limpo = nome.replace(/\s*\([^)]*\)\s*$/g, "").trim();
+    for (const r of NOMES_AMIGAVEIS) if (r.match.test(limpo)) return r.out;
+    return limpo;
+  };
   const observacaoAutomatica = (() => {
     const nome = limparNomeServico(servicoSelecionado?.nome || "—");
     const v = Number(valor.replace(",", ".") || 0);
