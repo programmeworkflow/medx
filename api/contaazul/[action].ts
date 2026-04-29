@@ -429,7 +429,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             throw new Error(`lookup BFF ${info.status}: ${info.text?.slice(0, 150)}`);
           }
           const sale: any = info.data || {};
+          // O BFF retorna installments com id+version dentro de
+          // financialEvent.paymentCondition.installments. Os outros paths
+          // (sale.installments, sale.parcelas, sale.paymentCondition.installments)
+          // não trazem o UUID das parcelas, só metadados.
           const installments: any[] =
+            sale.financialEvent?.paymentCondition?.installments ||
+            (sale.financialEvents?.[0]?.paymentCondition?.installments) ||
             sale.installments || sale.parcelas || sale.paymentCondition?.installments || [];
           if (!installments.length) {
             throw new Error("venda sem installments");
