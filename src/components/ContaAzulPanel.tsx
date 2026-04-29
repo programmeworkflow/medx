@@ -101,6 +101,18 @@ export default function ContaAzulPanel() {
     return `Referente ao(s) ${nome} do mês de ${MESES[mesRef - 1]}/${anoRef}\nValor total: R$ ${valorFmt}`;
   })();
 
+  // Em modo auto, o texto regenera quando dependências mudam — desde que o
+  // user não tenha editado (compara com último template aplicado).
+  const [obsLastTemplate, setObsLastTemplate] = useState("");
+  useEffect(() => {
+    if (obsModo === "auto") {
+      if (obs === "" || obs === obsLastTemplate) {
+        setObs(observacaoAutomatica);
+        setObsLastTemplate(observacaoAutomatica);
+      }
+    }
+  }, [obsModo, observacaoAutomatica]);
+
   const loadStatus = async () => {
     try {
       const r = await fetch(`${API_BASE}/api/contaazul/status`);
@@ -208,7 +220,7 @@ export default function ContaAzulPanel() {
     if (!centroCustoId) return toast.error("Selecione o centro de custo");
     if (!servicoId) return toast.error("Selecione o serviço");
     if (!valor) return toast.error("Informe o valor");
-    const observacaoFinal = obsModo === "auto" ? observacaoAutomatica : obs;
+    const observacaoFinal = obs;
     setSubmitting(true);
     try {
       const r = await fetch(`${API_BASE}/api/contaazul/create-receivable`, {
@@ -478,37 +490,53 @@ export default function ContaAzulPanel() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
                     <Label>Observações da NF</Label>
-                    <div className="flex gap-1 rounded-md border p-0.5">
-                      <button
-                        type="button"
-                        onClick={() => setObsModo("auto")}
-                        className={`px-2 py-0.5 text-xs rounded ${obsModo === "auto" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-                      >
-                        Gerar automático
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setObsModo("manual")}
-                        className={`px-2 py-0.5 text-xs rounded ${obsModo === "manual" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-                      >
-                        Manual
-                      </button>
+                    <div className="flex items-center gap-2">
+                      {obsModo === "auto" && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setObs(observacaoAutomatica);
+                            setObsLastTemplate(observacaoAutomatica);
+                          }}
+                          className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+                        >
+                          ↻ Regenerar
+                        </button>
+                      )}
+                      <div className="flex gap-1 rounded-md border p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setObsModo("auto");
+                            setObs(observacaoAutomatica);
+                            setObsLastTemplate(observacaoAutomatica);
+                          }}
+                          className={`px-2 py-0.5 text-xs rounded ${obsModo === "auto" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+                        >
+                          Gerar automático
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setObsModo("manual")}
+                          className={`px-2 py-0.5 text-xs rounded ${obsModo === "manual" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+                        >
+                          Manual
+                        </button>
+                      </div>
                     </div>
                   </div>
-                  {obsModo === "auto" ? (
-                    <div className="rounded-md border bg-muted/40 p-3 text-sm whitespace-pre-line font-mono">
-                      {observacaoAutomatica}
-                    </div>
-                  ) : (
-                    <Textarea
-                      value={obs}
-                      onChange={(e) => setObs(e.target.value)}
-                      placeholder="Texto livre que vai no campo Observações da NF"
-                      rows={4}
-                    />
-                  )}
+                  <Textarea
+                    value={obs}
+                    onChange={(e) => setObs(e.target.value)}
+                    placeholder={
+                      obsModo === "auto"
+                        ? "Texto gerado automaticamente — pode editar"
+                        : "Texto livre que vai no campo Observações da NF"
+                    }
+                    rows={4}
+                  />
                 </div>
                 <label className="flex items-start gap-2 cursor-pointer p-3 rounded-lg border border-border hover:border-primary/50 transition-colors">
                   <input
