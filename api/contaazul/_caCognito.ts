@@ -438,6 +438,15 @@ export async function cognitoStatus() {
     access_token_token_use = payload.token_use || "?";
     access_token_iat = new Date((payload.iat || 0) * 1000).toISOString();
   } catch {}
+  let access_token_device_key = "?";
+  let access_token_scope = "?";
+  try {
+    const payload = JSON.parse(
+      Buffer.from(sess.access_token.split(".")[1], "base64url").toString("utf8")
+    );
+    access_token_device_key = payload.device_key || "(none)";
+    access_token_scope = payload.scope || "?";
+  } catch {}
   return {
     connected: true,
     email: sess.email,
@@ -448,8 +457,11 @@ export async function cognitoStatus() {
       access_token_client_id,
       access_token_token_use,
       access_token_iat,
+      access_token_device_key,
+      access_token_scope,
       configured_client_id: CLIENT_ID,
       has_client_secret: !!CLIENT_SECRET,
+      refresh_token_length: sess.refresh_token?.length || 0,
     },
   };
 }
