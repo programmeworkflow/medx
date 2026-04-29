@@ -462,25 +462,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               type: "RECEBA_FACIL_BANK_SLIP",
             }
           );
-          if (!r.ok) {
+          const jaExiste =
+            !r.ok && r.status === 400 && /j[áa] existe.*cobran[çc]a/i.test(r.text || "");
+          if (!r.ok && !jaExiste) {
             throw new Error(`batch-create ${r.status}: ${r.text?.slice(0, 200)}`);
           }
-          boletoStatus = "solicitado";
-          const d: any = r.data || {};
-          const first =
-            (Array.isArray(d) ? d[0] : null) ||
-            d?.charges?.[0] ||
-            d?.chargeRequests?.[0] ||
-            d?.items?.[0] ||
-            d;
-          boletoUrl =
-            first?.url || first?.bankSlipUrl || first?.bank_slip_url || first?.boleto_url || null;
-          boletoLinhaDigitavel =
-            first?.barcode ||
-            first?.digitableLine ||
-            first?.linha_digitavel ||
-            first?.typeableLine ||
-            null;
+          boletoStatus = jaExiste ? "ja_emitido" : "solicitado";
+          // Re-busca a venda pra ler chargeRequest com status atualizado
+          try {
+            const updated = await caBffSession(
+              "GET",
+              `https://services.contaazul.com/contaazul-bff/sale/v1/sales/${vendaId}`
+            );
+            const inst2 = updated.data?.financialEvent?.paymentCondition?.installments?.[0];
+            const cr = inst2?.chargeRequests?.[0];
+            if (cr) {
+              boletoUrl = cr.url || null;
+              boletoLinhaDigitavel = cr.digitableLine || cr.barcode || null;
+              if (cr.status === "CONFIRMED" || inst2.authorizedBankSlipId) {
+                boletoStatus = "emitido";
+              } else if (cr.status === "AWAITING_CONFIRMATION") {
+                boletoStatus = "aguardando_confirmacao";
+              } else if (cr.status === "ERROR" || cr.errorDetail) {
+                boletoStatus = "erro";
+                boletoErro = cr.errorDetail || cr.status;
+              }
+            }
+          } catch (_) {}
         } catch (err: any) {
           boletoStatus = "erro";
           boletoErro = err?.message || "erro desconhecido";
@@ -777,28 +785,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       let boletoErro: string | null = null;
       let boletoUrl: string | null = null;
       let boletoLinhaDigitavel: string | null = null;
+      // Se 400 com "Já existe requisição de cobrança", tratamos como sucesso
+      // (significa que o boleto já foi emitido em chamada anterior).
+      const jaExiste =
+        !r.ok &&
+        r.status === 400 &&
+        /j[áa] existe.*cobran[çc]a/i.test(r.text || "");
 
-      if (r.ok) {
-        boletoStatus = "solicitado";
-        const d: any = r.data || {};
-        const first =
-          (Array.isArray(d) ? d[0] : null) ||
-          d?.charges?.[0] ||
-          d?.chargeRequests?.[0] ||
-          d?.items?.[0] ||
-          d;
-        boletoUrl =
-          first?.url ||
-          first?.bankSlipUrl ||
-          first?.bank_slip_url ||
-          first?.boleto_url ||
-          null;
-        boletoLinhaDigitavel =
-          first?.barcode ||
-          first?.digitableLine ||
-          first?.linha_digitavel ||
-          first?.typeableLine ||
-          null;
+      if (r.ok || jaExiste) {
+        boletoStatus = jaExiste ? "ja_emitido" : "solicitado";
+        // Re-busca a venda no BFF pra ler o chargeRequest com status atualizado
+        try {
+          const updated = await caBffSession(
+            "GET",
+            `https://services.contaazul.com/contaazul-bff/sale/v1/sales/${saleId}`
+          );
+          const inst = updated.data?.financialEvent?.paymentCondition?.installments?.[0];
+          const cr = inst?.chargeRequests?.[0];
+          if (cr) {
+            boletoUrl = cr.url || null;
+            boletoLinhaDigitavel = cr.digitableLine || cr.barcode || null;
+            // Se status do boleto já tá confirmado, marca como "emitido"
+            if (cr.status === "CONFIRMED" || inst.authorizedBankSlipId) {
+              boletoStatus = "emitido";
+            } else if (cr.status === "AWAITING_CONFIRMATION") {
+              boletoStatus = "aguardando_confirmacao";
+            } else if (cr.status === "ERROR" || cr.errorDetail) {
+              boletoStatus = "erro";
+              boletoErro = cr.errorDetail || cr.status;
+            }
+          }
+        } catch (_) {}
       } else {
         boletoErro = `${r.status}: ${r.text?.slice(0, 200)}`;
       }
@@ -822,6 +839,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         linha_digitavel: boletoLinhaDigitavel,
         payload_enviado: payload,
         raw: r.data,
+      });
+    }
+
+    if (action === "check-boleto") {
+      // Re-consulta o BFF e atualiza o status do boleto (URL, linha digitável)
+      // Usado pra polling após "aguardando_confirmacao".
+      const venda_id = (req.query.venda_id as string) || (req.body?.venda_id as string);
+      if (!venda_id) return res.status(400).json({ error: "venda_id obrigatório" });
+      const r = await caBffSession(
+        "GET",
+        `https://services.contaazul.com/contaazul-bff/sale/v1/sales/${venda_id}`
+      );
+      if (!r.ok) {
+        return res.status(200).json({ ok: false, status: r.status });
+      }
+      const inst = r.data?.financialEvent?.paymentCondition?.installments?.[0];
+      const cr = inst?.chargeRequests?.[0];
+      if (!cr) {
+        return res.status(200).json({ ok: false, error: "sem chargeRequest — boleto não emitido" });
+      }
+      let boleto_status = "aguardando_confirmacao";
+      if (cr.status === "CONFIRMED" || inst.authorizedBankSlipId) boleto_status = "emitido";
+      else if (cr.status === "ERROR" || cr.errorDetail) boleto_status = "erro";
+      const boleto_url = cr.url || null;
+      const boleto_linha_digitavel = cr.digitableLine || cr.barcode || null;
+      const sb = supaAdmin();
+      await sb.from("contaazul_vendas")
+        .update({ boleto_status, boleto_url, boleto_linha_digitavel })
+        .eq("ca_venda_id", venda_id);
+      return res.status(200).json({
+        ok: true,
+        boleto_status,
+        boleto_url,
+        boleto_linha_digitavel,
+        charge_request_status: cr.status,
       });
     }
 
