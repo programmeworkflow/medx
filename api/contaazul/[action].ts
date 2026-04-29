@@ -338,9 +338,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       let venda: any;
       try {
-        venda = await caApi("POST", "/v1/venda", buildPayload(1));
+        // Começa com número alto pra garantir que a CA rejeite com a mensagem
+        // "O nº NNN é o próximo disponível" — daí pegamos o próximo correto.
+        // (Se enviarmos 1 e estiver vazio, a CA aceita e cria com numero=1 fora
+        // de sequência — estraga a numeração de produção.)
+        venda = await caApi("POST", "/v1/venda", buildPayload(999999999));
       } catch (err: any) {
-        // Conta Azul devolve "O nº NNN é o próximo disponível" no erro
         const m = String(err?.message || "").match(/nº\s+(\d+)/);
         if (!m) throw err;
         venda = await caApi("POST", "/v1/venda", buildPayload(Number(m[1])));
