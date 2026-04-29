@@ -405,45 +405,27 @@ export async function cognitoRefresh(): Promise<CognitoSession> {
     deviceKey = payload.device_key || "";
   } catch {}
 
-  // Tenta variações pra descobrir o formato aceito pelo client da CA
-  const tentativas: Array<{ desc: string; params: Record<string, string> }> = [
-    { desc: "sem DEVICE_KEY", params: { REFRESH_TOKEN: cur.refresh_token } },
-    {
-      desc: "com DEVICE_KEY",
-      params: deviceKey
-        ? { REFRESH_TOKEN: cur.refresh_token, DEVICE_KEY: deviceKey }
-        : { REFRESH_TOKEN: cur.refresh_token },
-    },
-    {
-      desc: "com SECRET_HASH",
-      params: withSecretHash({ REFRESH_TOKEN: cur.refresh_token }, cur.email),
-    },
-  ];
+  // Refresh via REFRESH_TOKEN_AUTH. App client da CA com MFA habilitado
+  // pode rejeitar com "Invalid Refresh Token" — nesse caso, user precisa
+  // re-logar via cognito-login. AccessToken vale 24h, então é tolerável.
+  const params: Record<string, string> = withSecretHash(
+    { REFRESH_TOKEN: cur.refresh_token },
+    cur.email
+  );
+  if (deviceKey) params.DEVICE_KEY = deviceKey;
 
-  const errosDetalhados: string[] = [];
-  for (const t of tentativas) {
-    try {
-      const r: any = await cognitoCall("InitiateAuth", {
-        AuthFlow: "REFRESH_TOKEN_AUTH",
-        ClientId: CLIENT_ID,
-        AuthParameters: t.params,
-      });
-      const a = r?.AuthenticationResult;
-      if (a?.AccessToken) {
-        console.log(`[cognitoRefresh] success com tentativa: ${t.desc}`);
-        return saveCognitoSession(
-          cur.email,
-          a.AccessToken,
-          a.RefreshToken || cur.refresh_token,
-          cur.session_id
-        );
-      }
-      errosDetalhados.push(`${t.desc}: sem AccessToken — ${JSON.stringify(r).slice(0, 150)}`);
-    } catch (err: any) {
-      errosDetalhados.push(`${t.desc}: ${err?.message?.slice(0, 200)}`);
-    }
+  const r: any = await cognitoCall("InitiateAuth", {
+    AuthFlow: "REFRESH_TOKEN_AUTH",
+    ClientId: CLIENT_ID,
+    AuthParameters: params,
+  });
+  const a = r?.AuthenticationResult;
+  if (!a?.AccessToken) {
+    throw new Error(
+      `Refresh Cognito não suportado por esse app client. Re-logar necessário: ${JSON.stringify(r).slice(0, 200)}`
+    );
   }
-  throw new Error(`Refresh falhou em todas as tentativas:\n${errosDetalhados.join("\n")}`);
+  return saveCognitoSession(cur.email, a.AccessToken, a.RefreshToken || cur.refresh_token, cur.session_id);
 }
 
 export async function cognitoStatus() {
@@ -470,11 +452,13 @@ export async function cognitoStatus() {
     access_token_device_key = payload.device_key || "(none)";
     access_token_scope = payload.scope || "?";
   } catch {}
+  const expiresInSeconds = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
   return {
     connected: true,
+    needs_relogin: expiresInSeconds < 3600, // alerta quando faltam < 1h
     email: sess.email,
     access_token_expires_at: sess.expires_at,
-    access_token_expires_in_seconds: Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)),
+    access_token_expires_in_seconds: expiresInSeconds,
     session_id: sess.session_id,
     debug: {
       access_token_client_id,
