@@ -388,23 +388,37 @@ async function loadCognitoSession(): Promise<CognitoSession | null> {
 }
 
 // Renova o AccessToken via REFRESH_TOKEN_AUTH (sem MFA).
-// Chamado pelo cron a cada 6h e on-demand quando expira.
+// Chamado pelo cron diário e on-demand quando expira.
+// Passa DEVICE_KEY (extraído do AccessToken atual) — Cognito exige quando
+// o login original gerou um device, senão retorna "does not support refresh
+// token rotation".
 export async function cognitoRefresh(): Promise<CognitoSession> {
   const cur = await loadCognitoSession();
   if (!cur) throw new Error("Sem sessão Cognito. Faça login via /api/contaazul/cognito-login");
+
+  let deviceKey = "";
+  try {
+    const payload = JSON.parse(
+      Buffer.from(cur.access_token.split(".")[1], "base64url").toString("utf8")
+    );
+    deviceKey = payload.device_key || "";
+  } catch {}
+
+  const params: Record<string, string> = {
+    REFRESH_TOKEN: cur.refresh_token,
+    SECRET_HASH: secretHash(cur.email),
+  };
+  if (deviceKey) params.DEVICE_KEY = deviceKey;
+
   const r: any = await cognitoCall("InitiateAuth", {
     AuthFlow: "REFRESH_TOKEN_AUTH",
     ClientId: CLIENT_ID,
-    AuthParameters: {
-      REFRESH_TOKEN: cur.refresh_token,
-      SECRET_HASH: secretHash(cur.email),
-    },
+    AuthParameters: params,
   });
   const a = r?.AuthenticationResult;
   if (!a?.AccessToken) {
     throw new Error(`Refresh falhou (refresh_token expirou?): ${JSON.stringify(r).slice(0, 250)}`);
   }
-  // RefreshToken pode ou não vir no response — Cognito reutiliza o velho se omitido
   return saveCognitoSession(cur.email, a.AccessToken, a.RefreshToken || cur.refresh_token, cur.session_id);
 }
 
