@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/table";
 import { AlertTriangle, Wallet } from "lucide-react";
 import { toast } from "sonner";
+import { formatCnpjCpf } from "@/lib/format";
 import {
   fetchFaturamentos,
   fetchEmpresas,
@@ -234,7 +235,7 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
                 </p>
                 <ul className="text-xs text-muted-foreground mt-1 space-y-0.5">
                   {semCadastroList.slice(0, 5).map((l) => (
-                    <li key={l.faturamentoId}>• {l.cnpj} — {l.nome}</li>
+                    <li key={l.faturamentoId}>• {formatCnpjCpf(l.cnpj)} — {l.nome}</li>
                   ))}
                   {semCadastroList.length > 5 && <li>+ {semCadastroList.length - 5} outras</li>}
                 </ul>
@@ -329,7 +330,7 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
                     {l.semCadastro && <Badge variant="outline" className="ml-2 text-xs">sem cadastro</Badge>}
                     {l.categoria === "credenciada" && <Badge variant="secondary" className="ml-2 text-xs">credenciada</Badge>}
                   </TableCell>
-                  <TableCell className="font-mono text-xs">{l.cnpj}</TableCell>
+                  <TableCell className="font-mono text-xs">{formatCnpjCpf(l.cnpj)}</TableCell>
                   <TableCell className="text-right">{fmtBRL(l.valor)}</TableCell>
                   <TableCell>
                     <Select

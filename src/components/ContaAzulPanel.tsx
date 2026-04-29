@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { CheckCircle2, AlertCircle, Plus, ExternalLink, Power, KeyRound } from "lucide-react";
+import { formatCnpjCpf } from "@/lib/format";
 import { toast } from "sonner";
 import { fetchEmpresas, type Empresa } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
@@ -407,7 +408,7 @@ export default function ContaAzulPanel() {
                     <SelectContent>
                       {empresas.map((e: Empresa) => (
                         <SelectItem key={e.id} value={e.id}>
-                          {e.nome_empresa} ({e.cnpj})
+                          {e.nome_empresa} ({formatCnpjCpf(e.cnpj)})
                         </SelectItem>
                       ))}
                     </SelectContent>

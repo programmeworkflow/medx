@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Plus, Search, Pencil, Trash2, FileText, Download, Upload, AlertTriangle, AlarmClock } from "lucide-react";
 import { toast } from "sonner";
+import { formatCnpjCpf, maskCnpjCpf, onlyDigits, detectDocumentoTipo } from "@/lib/format";
 import {
   fetchCredenciadas,
   insertCredenciada,
@@ -148,12 +149,16 @@ export default function Credenciadas() {
 
   const handleSave = () => {
     if (!nome || !cnpj) {
-      toast.error("Nome e CNPJ são obrigatórios.");
+      toast.error("Nome e CNPJ/CPF são obrigatórios.");
+      return;
+    }
+    if (detectDocumentoTipo(cnpj) === "INVALIDO") {
+      toast.error("Documento inválido — precisa ter 11 dígitos (CPF) ou 14 (CNPJ)");
       return;
     }
     const payload: CredenciadaInsert = {
       nome,
-      cnpj,
+      cnpj: onlyDigits(cnpj),
       possui_contrato: possuiContrato,
       data_contrato: possuiContrato && dataContrato ? dataContrato : null,
       email_faturamento: emailFat || null,
@@ -189,7 +194,13 @@ export default function Credenciadas() {
   }, []);
 
   const filtered = credenciadas.filter((c) =>
-    c.nome.toLowerCase().includes(search.toLowerCase()) || c.cnpj.includes(search)
+    (() => {
+      const sd = onlyDigits(search);
+      return (
+        c.nome.toLowerCase().includes(search.toLowerCase()) ||
+        (!!sd && onlyDigits(c.cnpj).includes(sd))
+      );
+    })()
   );
 
   const alertasReajuste = filtered
@@ -223,7 +234,12 @@ export default function Credenciadas() {
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-2">
                         <Label>CNPJ</Label>
-                        <Input value={cnpj} onChange={(e) => setCnpj(e.target.value)} placeholder="00.000.000/0000-00" />
+                        <Input
+                          value={maskCnpjCpf(cnpj)}
+                          onChange={(e) => setCnpj(maskCnpjCpf(e.target.value))}
+                          placeholder="00.000.000/0000-00 ou 000.000.000-00"
+                          inputMode="numeric"
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label>E-mail para faturamento</Label>
@@ -396,7 +412,7 @@ export default function Credenciadas() {
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="text-muted-foreground text-xs font-mono">{c.cnpj}</TableCell>
+                    <TableCell className="text-muted-foreground text-xs font-mono">{formatCnpjCpf(c.cnpj)}</TableCell>
                     <TableCell className="text-xs">
                       {c.possui_contrato ? (
                         <div>

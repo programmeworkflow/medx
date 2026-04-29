@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
@@ -25,12 +25,13 @@ import {
 } from "@/lib/api";
 import { supabase } from "@/integrations/supabase/client";
 import ContaAzulPanel from "@/components/ContaAzulPanel";
+import { formatCnpjCpf, onlyDigits } from "@/lib/format";
 
 type SortKey = "nome" | "valor" | "status";
 type SortDir = "asc" | "desc";
 
 function normalizeCnpj(raw: string): string {
-  return String(raw).replace(/[^\d]/g, "");
+  return onlyDigits(raw);
 }
 
 function formatBRL(value: number | null): string {
@@ -114,10 +115,32 @@ export default function Faturamento() {
     toast.success(`${selectedIds.size} empresas concluídas!`);
   };
 
-  const handleRefresh = async () => {
-    // Re-check empresas against faturamentos sem_cadastro
+  // Re-vincula faturamentos sem_cadastro a empresas que ganharam cadastro depois.
+  // Sempre compara por CNPJ (não por id). Se há outra empresa com mesmo CNPJ
+  // (ou a placeholder original foi classificada), aponta o faturamento pra ela.
+  const reconciliarSemCadastro = async (silencioso: boolean = false) => {
     const empresas = await fetchEmpresas();
-    const empresasByCnpj = new Map(empresas.map((e) => [normalizeCnpj(e.cnpj), e]));
+    // Index: cnpj normalizado → preferir empresas com categoria != medwork (cadastros reais)
+    const empresasByCnpj = new Map<string, any[]>();
+    for (const e of empresas) {
+      const k = normalizeCnpj(e.cnpj);
+      if (!k) continue;
+      const arr = empresasByCnpj.get(k) || [];
+      arr.push(e);
+      empresasByCnpj.set(k, arr);
+    }
+    const escolherCadastro = (cnpjNorm: string, currentExecId: string) => {
+      const arr = empresasByCnpj.get(cnpjNorm) || [];
+      // Prioriza: outra empresa com categoria != medwork
+      const real = arr.find((e) => e.id !== currentExecId && e.categoria !== "medwork");
+      if (real) return real;
+      // 2º: a própria empresa, se já foi classificada
+      const self = arr.find((e) => e.id === currentExecId && e.categoria !== "medwork");
+      if (self) return self;
+      // 3º: qualquer outra empresa com mesmo CNPJ (mesmo categoria=medwork mas diferente)
+      const outra = arr.find((e) => e.id !== currentExecId);
+      return outra || null;
+    };
 
     let updated = 0;
     for (const fat of faturamentos) {
@@ -125,25 +148,41 @@ export default function Faturamento() {
       const exec = (fat as any).empresa_executora;
       if (!exec) continue;
       const cnpjNorm = normalizeCnpj(exec.cnpj);
-      const empresa = empresasByCnpj.get(cnpjNorm);
-      if (empresa && empresa.categoria !== "medwork") {
-        // Has been classified - update faturamento
-        await supabase.from("faturamentos").update({
-          status: "pendente",
-          categoria_snapshot: empresa.categoria,
-          empresa_faturadora_id: empresa.empresa_faturadora_id || empresa.id,
-        }).eq("id", (fat as any).id);
-        updated++;
-      }
+      const escolhida = escolherCadastro(cnpjNorm, exec.id);
+      if (!escolhida) continue;
+      // Só atualiza se: (a) achou cadastro real (categoria != medwork) ou
+      // (b) a empresa atual mudou de categoria (não é mais placeholder)
+      const ehReal = escolhida.categoria !== "medwork";
+      const idMudou = escolhida.id !== exec.id;
+      if (!ehReal && !idMudou) continue;
+      await supabase.from("faturamentos").update({
+        status: "pendente",
+        categoria_snapshot: escolhida.categoria,
+        empresa_executora_id: escolhida.id,
+        empresa_faturadora_id: escolhida.empresa_faturadora_id || escolhida.id,
+      }).eq("id", (fat as any).id);
+      updated++;
     }
 
-    queryClient.invalidateQueries({ queryKey: ["faturamentos", compId] });
     if (updated > 0) {
-      toast.success(`${updated} empresas atualizadas com dados do cadastro!`);
-    } else {
-      toast.info("Nenhuma empresa atualizada. Verifique se os cadastros foram classificados.");
+      queryClient.invalidateQueries({ queryKey: ["faturamentos", compId] });
+      if (!silencioso) toast.success(`${updated} empresa(s) re-vinculada(s) ao cadastro`);
+    } else if (!silencioso) {
+      toast.info("Nenhum sem_cadastro encontrou cadastro real ainda");
     }
+    return updated;
   };
+
+  const handleRefresh = () => reconciliarSemCadastro(false);
+
+  // Auto-reconcilia quando a lista de faturamentos carrega/troca de competência
+  useEffect(() => {
+    if (!faturamentos.length) return;
+    const semCad = faturamentos.filter((f: any) => f.status === "sem_cadastro");
+    if (semCad.length === 0) return;
+    reconciliarSemCadastro(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [faturamentos.length, compId]);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -153,9 +192,10 @@ export default function Faturamento() {
   const filtered = useMemo(() => {
     return faturamentos.filter((f: any) => {
       const s = search.toLowerCase();
+      const searchDigits = onlyDigits(search);
       const matchSearch = !search ||
         f.empresa_executora?.nome_empresa?.toLowerCase().includes(s) ||
-        f.empresa_executora?.cnpj?.includes(s);
+        (searchDigits && onlyDigits(f.empresa_executora?.cnpj).includes(searchDigits));
       const matchCat = filterCategoria === "all" || f.categoria_snapshot === filterCategoria;
       const matchFat = filterFaturamento === "all" ||
         (filterFaturamento === "propria" ? f.empresa_executora_id === f.empresa_faturadora_id : f.empresa_executora_id !== f.empresa_faturadora_id);
@@ -338,7 +378,7 @@ export default function Faturamento() {
                       )}
                     </TableCell>
                     <TableCell className={`text-xs font-mono ${isFinished ? "line-through text-muted-foreground" : "text-muted-foreground"}`}>
-                      {exec?.cnpj ?? "—"}
+                      {exec?.cnpj ? formatCnpjCpf(exec.cnpj) : "—"}
                     </TableCell>
                     <TableCell className="text-sm font-medium">
                       {editingValorId === fat.id ? (

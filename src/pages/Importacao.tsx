@@ -123,7 +123,7 @@ export default function Importacao() {
             .from("empresas")
             .insert({
               nome_empresa: nomeEmpresa,
-              cnpj: String(rawCnpj),
+              cnpj: cnpjNorm,
               categoria: "medwork" as const,
               tipo_faturamento: "propria_empresa" as const,
               ativa: true,

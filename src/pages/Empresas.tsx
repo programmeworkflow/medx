@@ -16,6 +16,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
+import { formatCnpjCpf, maskCnpjCpf, onlyDigits, detectDocumentoTipo } from "@/lib/format";
 import {
   fetchEmpresas,
   insertEmpresa,
@@ -139,7 +140,10 @@ export default function Empresas() {
   };
 
   const filtered = empresas.filter((e) => {
-    const matchSearch = e.nome_empresa.toLowerCase().includes(search.toLowerCase()) || e.cnpj.includes(search);
+    const sd = onlyDigits(search);
+    const matchSearch =
+      e.nome_empresa.toLowerCase().includes(search.toLowerCase()) ||
+      (sd && onlyDigits(e.cnpj).includes(sd));
     const matchCat = filterCategoria === "all" || e.categoria === filterCategoria;
     const matchFat = filterFaturamento === "all" || e.tipo_faturamento === filterFaturamento;
     return matchSearch && matchCat && matchFat;
@@ -150,12 +154,18 @@ export default function Empresas() {
 
   const handleSave = () => {
     if (!nome || !cnpj) {
-      toast.error("Nome e CNPJ são obrigatórios.");
+      toast.error("Nome e CNPJ/CPF são obrigatórios.");
       return;
     }
+    const tipoDoc = detectDocumentoTipo(cnpj);
+    if (tipoDoc === "INVALIDO") {
+      toast.error("Documento inválido — precisa ter 11 dígitos (CPF) ou 14 (CNPJ)");
+      return;
+    }
+    const cnpjLimpo = onlyDigits(cnpj);
     const payload: any = {
       nome_empresa: nome,
-      cnpj,
+      cnpj: cnpjLimpo,
       categoria,
       tipo_faturamento: tipo,
       empresa_faturadora_id: tipo === "outra_empresa" ? fatId || undefined : null,
@@ -345,8 +355,18 @@ export default function Empresas() {
                         <Input value={nome} onChange={(e) => setNome(e.target.value)} />
                       </div>
                       <div className="space-y-2">
-                        <Label>CNPJ</Label>
-                        <Input value={cnpj} onChange={(e) => setCnpj(e.target.value)} placeholder="00.000.000/0000-00" />
+                        <Label>{detectDocumentoTipo(cnpj) === "CPF" ? "CPF" : "CNPJ"} <span className="text-xs text-muted-foreground font-normal">(máscara automática)</span></Label>
+                        <Input
+                          value={maskCnpjCpf(cnpj)}
+                          onChange={(e) => setCnpj(maskCnpjCpf(e.target.value))}
+                          placeholder="00.000.000/0000-00 ou 000.000.000-00"
+                          inputMode="numeric"
+                        />
+                        {cnpj && detectDocumentoTipo(cnpj) === "INVALIDO" && (
+                          <p className="text-xs text-destructive">
+                            Documento incompleto: precisa ter 11 dígitos (CPF) ou 14 (CNPJ)
+                          </p>
+                        )}
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-2">
@@ -544,7 +564,7 @@ export default function Empresas() {
                       <Checkbox checked={selectedIds.has(e.id)} onCheckedChange={() => toggleSelect(e.id)} />
                     </TableCell>
                     <TableCell className="font-medium">{e.nome_empresa}</TableCell>
-                    <TableCell className="text-muted-foreground text-xs font-mono">{e.cnpj}</TableCell>
+                    <TableCell className="text-muted-foreground text-xs font-mono">{formatCnpjCpf(e.cnpj)}</TableCell>
                     <TableCell><Badge variant="secondary">{CATEGORIA_LABELS[e.categoria]}</Badge></TableCell>
                     <TableCell>
                       {fat ? <span className="text-sm">→ {fat.nome_empresa}</span> : <span className="text-xs text-muted-foreground">Própria</span>}
@@ -620,7 +640,7 @@ export default function Empresas() {
             <div className="space-y-3 mt-2">
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div><span className="text-muted-foreground">Nome:</span><p className="font-medium">{selectedEmpresa.nome_empresa}</p></div>
-                <div><span className="text-muted-foreground">CNPJ:</span><p className="font-mono">{selectedEmpresa.cnpj}</p></div>
+                <div><span className="text-muted-foreground">CNPJ:</span><p className="font-mono">{formatCnpjCpf(selectedEmpresa.cnpj)}</p></div>
                 <div><span className="text-muted-foreground">Categoria:</span><p><Badge variant="secondary">{CATEGORIA_LABELS[selectedEmpresa.categoria]}</Badge></p></div>
                 <div><span className="text-muted-foreground">Faturamento:</span><p>{selectedEmpresa.tipo_faturamento === "outra_empresa" ? `→ ${empresas.find(x => x.id === selectedEmpresa.empresa_faturadora_id)?.nome_empresa || "—"}` : "Própria Empresa"}</p></div>
                 <div><span className="text-muted-foreground">Status:</span><p><Badge variant={selectedEmpresa.ativa ? "default" : "destructive"}>{selectedEmpresa.ativa ? "Ativa" : "Inativa"}</Badge></p></div>
