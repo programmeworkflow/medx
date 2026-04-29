@@ -94,8 +94,12 @@ export default function ContaAzulPanel() {
     "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
   ];
   const servicoSelecionado = servicos.find((s) => s.id === servicoId);
+  // Limpa sufixo entre parênteses (ex: "EXAMES OCUPACIONAIS (Sem Retenção de ISS)"
+  // → "EXAMES OCUPACIONAIS") pra observação ficar limpa na NF
+  const limparNomeServico = (nome: string) =>
+    nome.replace(/\s*\([^)]*\)\s*$/g, "").trim();
   const observacaoAutomatica = (() => {
-    const nome = servicoSelecionado?.nome || "—";
+    const nome = limparNomeServico(servicoSelecionado?.nome || "—");
     const v = Number(valor.replace(",", ".") || 0);
     const valorFmt = v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     return `Referente ao(s) ${nome} do mês de ${MESES[mesRef - 1]}/${anoRef}\nValor total: R$ ${valorFmt}`;

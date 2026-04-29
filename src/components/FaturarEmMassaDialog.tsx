@@ -149,7 +149,9 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
   const handleFaturar = async () => {
     if (selecionadas.length === 0) return toast.error("Nenhuma linha selecionada");
     if (!servicoPadrao) return toast.error("Selecione o serviço");
-    const servicoNome = servicos.find((s) => s.id === servicoPadrao)?.nome || "Serviço";
+    const servicoNomeRaw = servicos.find((s) => s.id === servicoPadrao)?.nome || "Serviço";
+    // Remove sufixo técnico entre parênteses (ex: "(Sem Retenção de ISS)")
+    const servicoNome = servicoNomeRaw.replace(/\s*\([^)]*\)\s*$/g, "").trim();
     setProgress({ done: 0, total: selecionadas.length });
     let ok = 0;
     let fail = 0;
