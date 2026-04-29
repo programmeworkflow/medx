@@ -293,11 +293,13 @@ interface CognitoSession {
   email: string;
 }
 
-export async function cognitoLoginInteractive(
+// Faz o fluxo Cognito completo: USER_PASSWORD_AUTH + (MFA TOTP se exigido).
+// totpCode pode ser fornecido pelo user OU gerado automaticamente do TOTP_SECRET.
+async function doCognitoLogin(
   email: string,
   senha: string,
   totpCode?: string
-): Promise<CognitoSession> {
+): Promise<{ AccessToken: string; RefreshToken: string }> {
   const r: any = await cognitoCall("InitiateAuth", {
     AuthFlow: "USER_PASSWORD_AUTH",
     ClientId: CLIENT_ID,
@@ -306,10 +308,14 @@ export async function cognitoLoginInteractive(
 
   let auth = r?.AuthenticationResult;
 
-  // MFA TOTP exigido
   if (!auth && r?.ChallengeName === "SOFTWARE_TOKEN_MFA") {
-    if (!totpCode) {
-      throw new Error("MFA_REQUIRED: passe totp_code (6 dígitos do app autenticador)");
+    // Usa TOTP fornecido ou gera do seed
+    let code = totpCode;
+    if (!code && TOTP_SECRET) {
+      code = totpNow(TOTP_SECRET);
+    }
+    if (!code) {
+      throw new Error("MFA_REQUIRED: passe totp_code ou configure CONTA_AZUL_TOTP_SECRET");
     }
     const username = r.ChallengeParameters?.USER_ID_FOR_SRP || email;
     const r2: any = await cognitoCall("RespondToAuthChallenge", {
@@ -317,7 +323,7 @@ export async function cognitoLoginInteractive(
       ClientId: CLIENT_ID,
       Session: r.Session,
       ChallengeResponses: withSecretHash(
-        { USERNAME: username, SOFTWARE_TOKEN_MFA_CODE: totpCode },
+        { USERNAME: username, SOFTWARE_TOKEN_MFA_CODE: code },
         username
       ),
     });
@@ -330,23 +336,53 @@ export async function cognitoLoginInteractive(
   }
 
   if (!auth) {
-    throw new Error(
-      `Login Cognito não suportado: ${JSON.stringify(r).slice(0, 250)}`
-    );
+    throw new Error(`Login Cognito não suportado: ${JSON.stringify(r).slice(0, 250)}`);
   }
 
-  return saveCognitoSession(email, auth.AccessToken, auth.RefreshToken);
+  return { AccessToken: auth.AccessToken, RefreshToken: auth.RefreshToken };
 }
 
-function saveCognitoSessionLocal(s: CognitoSession) {
+export async function cognitoLoginInteractive(
+  email: string,
+  senha: string,
+  totpCode?: string
+): Promise<CognitoSession> {
+  const tokens = await doCognitoLogin(email, senha, totpCode);
+  // Salva email + senha (cifrada) pra cron poder fazer auto-login depois
+  return saveCognitoSession(email, tokens.AccessToken, tokens.RefreshToken, null, senha);
+}
+
+// Auto-login: usa email+senha cifrados no banco + TOTP gerado do seed.
+// Chamado pelo cron quando refresh falha.
+async function cognitoAutoLogin(): Promise<CognitoSession> {
+  const sb = supaAdmin();
+  const { data } = await sb.from("contaazul_session").select("*").eq("id", 1).maybeSingle();
+  if (!data) throw new Error("Sem sessão prévia. Faça login interativo 1x via /api/contaazul/cognito-login");
+  const email = data.email;
+  let senha: string;
+  try {
+    senha = decryptSecret(data.access_token);
+    if (!senha) throw new Error("Senha não está salva — re-logar interativo");
+  } catch {
+    throw new Error("Senha não está salva — re-logar interativo");
+  }
+  if (!TOTP_SECRET) {
+    throw new Error("CONTA_AZUL_TOTP_SECRET não configurado");
+  }
+  const tokens = await doCognitoLogin(email, senha, undefined);
+  return saveCognitoSession(email, tokens.AccessToken, tokens.RefreshToken, data.session_id, senha);
+}
+
+function saveCognitoSessionLocal(s: CognitoSession, senha: string | null) {
   const sb = supaAdmin();
   return sb.from("contaazul_session").upsert(
     {
       id: 1,
       email: s.email,
-      id_token: encryptSecret(s.access_token), // AccessToken JWT (= x-ca-auth)
-      access_token: encryptSecret(""), // legado/não usado
-      refresh_token: encryptSecret(""), // legado (modo cookie usava como session_id)
+      id_token: encryptSecret(s.access_token),
+      // Reusa coluna access_token pra senha cifrada (legado, não usada no modo Cognito)
+      access_token: senha != null ? encryptSecret(senha) : encryptSecret(""),
+      refresh_token: encryptSecret(""),
       cognito_refresh_token: encryptSecret(s.refresh_token),
       session_id: s.session_id,
       expires_at: s.expires_at,
@@ -360,7 +396,8 @@ async function saveCognitoSession(
   email: string,
   accessToken: string,
   refreshToken: string,
-  reuseSessionId?: string | null
+  reuseSessionId?: string | null,
+  senha?: string | null
 ): Promise<CognitoSession> {
   const expMs = jwtExpiry(accessToken);
   const session_id = reuseSessionId || crypto.randomUUID();
@@ -371,7 +408,16 @@ async function saveCognitoSession(
     session_id,
     email,
   };
-  await saveCognitoSessionLocal(sess);
+  // Se não veio senha, preserva a que estava no banco
+  let senhaToSave = senha ?? null;
+  if (senhaToSave === null) {
+    try {
+      const sb = supaAdmin();
+      const { data } = await sb.from("contaazul_session").select("access_token").eq("id", 1).maybeSingle();
+      if (data?.access_token) senhaToSave = decryptSecret(data.access_token);
+    } catch {}
+  }
+  await saveCognitoSessionLocal(sess, senhaToSave);
   return sess;
 }
 
@@ -405,27 +451,36 @@ export async function cognitoRefresh(): Promise<CognitoSession> {
     deviceKey = payload.device_key || "";
   } catch {}
 
-  // Refresh via REFRESH_TOKEN_AUTH. App client da CA com MFA habilitado
-  // pode rejeitar com "Invalid Refresh Token" — nesse caso, user precisa
-  // re-logar via cognito-login. AccessToken vale 24h, então é tolerável.
-  const params: Record<string, string> = withSecretHash(
-    { REFRESH_TOKEN: cur.refresh_token },
-    cur.email
-  );
-  if (deviceKey) params.DEVICE_KEY = deviceKey;
-
-  const r: any = await cognitoCall("InitiateAuth", {
-    AuthFlow: "REFRESH_TOKEN_AUTH",
-    ClientId: CLIENT_ID,
-    AuthParameters: params,
-  });
-  const a = r?.AuthenticationResult;
-  if (!a?.AccessToken) {
-    throw new Error(
-      `Refresh Cognito não suportado por esse app client. Re-logar necessário: ${JSON.stringify(r).slice(0, 200)}`
+  // Tenta REFRESH_TOKEN_AUTH primeiro. Se falhar (típico em fluxos pós-MFA
+  // do app client da CA), cai no auto-login completo (precisa email+senha
+  // salvos + CONTA_AZUL_TOTP_SECRET configurado).
+  try {
+    const params: Record<string, string> = withSecretHash(
+      { REFRESH_TOKEN: cur.refresh_token },
+      cur.email
     );
+    if (deviceKey) params.DEVICE_KEY = deviceKey;
+
+    const r: any = await cognitoCall("InitiateAuth", {
+      AuthFlow: "REFRESH_TOKEN_AUTH",
+      ClientId: CLIENT_ID,
+      AuthParameters: params,
+    });
+    const a = r?.AuthenticationResult;
+    if (a?.AccessToken) {
+      return saveCognitoSession(
+        cur.email,
+        a.AccessToken,
+        a.RefreshToken || cur.refresh_token,
+        cur.session_id
+      );
+    }
+  } catch (err: any) {
+    // Refresh falhou — cai no fallback de auto-login
   }
-  return saveCognitoSession(cur.email, a.AccessToken, a.RefreshToken || cur.refresh_token, cur.session_id);
+
+  // Fallback: auto-login completo
+  return cognitoAutoLogin();
 }
 
 export async function cognitoStatus() {
