@@ -252,7 +252,7 @@ export default function ContaAzulPanel() {
           razao_social: empresa.nome_empresa,
           centro_custo_id: empresaCC,
           servico_id: servicoId,
-          servico: servicoSelecionado?.nome || "Serviço",
+          servico: limparNomeServico(servicoSelecionado?.nome || "Serviço"),
           valor: Number(valor.replace(",", ".")),
           data_venda: dataVenda,
           observacoes: observacaoFinal,

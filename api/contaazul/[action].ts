@@ -309,6 +309,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // 5. Cria venda em /v1/venda (Receita de Serviço — aceita NF e boleto)
       const dataVenda = body.data_venda || new Date().toISOString().slice(0, 10);
       const valor = Number(body.valor);
+      const contaRecebimentoId =
+        process.env.CONTA_AZUL_FINANCIAL_ACCOUNT_ID ||
+        "49e2c1f3-c117-4882-82d0-e9ae9795f882";
       const buildPayload = (numero: number) => ({
         id_cliente: personId,
         numero,
@@ -331,6 +334,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               valor,
               data_vencimento: dataVenda,
               descricao: body.servico,
+              forma_pagamento: "BOLETO_BANCARIO",
+              id_conta: contaRecebimentoId,
             },
           ],
         },
