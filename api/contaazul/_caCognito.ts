@@ -404,22 +404,50 @@ export async function cognitoRefresh(): Promise<CognitoSession> {
     deviceKey = payload.device_key || "";
   } catch {}
 
-  const params: Record<string, string> = {
-    REFRESH_TOKEN: cur.refresh_token,
-    SECRET_HASH: secretHash(cur.email),
-  };
-  if (deviceKey) params.DEVICE_KEY = deviceKey;
+  // Tenta variações até alguma funcionar — o app client da CA pode aceitar
+  // só DEVICE_KEY, ou só SECRET_HASH, ou ambos. Erro "does not support refresh
+  // token rotation" indica que algum parâmetro tá errado pra esse client.
+  const tentativas: Array<Record<string, string>> = [
+    // 1. Padrão (todos)
+    {
+      REFRESH_TOKEN: cur.refresh_token,
+      SECRET_HASH: secretHash(cur.email),
+      ...(deviceKey ? { DEVICE_KEY: deviceKey } : {}),
+    },
+    // 2. Sem SECRET_HASH (alguns clients sem secret rejeitam)
+    {
+      REFRESH_TOKEN: cur.refresh_token,
+      ...(deviceKey ? { DEVICE_KEY: deviceKey } : {}),
+    },
+    // 3. Sem DEVICE_KEY
+    {
+      REFRESH_TOKEN: cur.refresh_token,
+      SECRET_HASH: secretHash(cur.email),
+    },
+    // 4. Só refresh
+    {
+      REFRESH_TOKEN: cur.refresh_token,
+    },
+  ];
 
-  const r: any = await cognitoCall("InitiateAuth", {
-    AuthFlow: "REFRESH_TOKEN_AUTH",
-    ClientId: CLIENT_ID,
-    AuthParameters: params,
-  });
-  const a = r?.AuthenticationResult;
-  if (!a?.AccessToken) {
-    throw new Error(`Refresh falhou (refresh_token expirou?): ${JSON.stringify(r).slice(0, 250)}`);
+  let lastErr: string | null = null;
+  for (const params of tentativas) {
+    try {
+      const r: any = await cognitoCall("InitiateAuth", {
+        AuthFlow: "REFRESH_TOKEN_AUTH",
+        ClientId: CLIENT_ID,
+        AuthParameters: params,
+      });
+      const a = r?.AuthenticationResult;
+      if (a?.AccessToken) {
+        return saveCognitoSession(cur.email, a.AccessToken, a.RefreshToken || cur.refresh_token, cur.session_id);
+      }
+      lastErr = `sem AccessToken: ${JSON.stringify(r).slice(0, 200)}`;
+    } catch (err: any) {
+      lastErr = err?.message || "erro desconhecido";
+    }
   }
-  return saveCognitoSession(cur.email, a.AccessToken, a.RefreshToken || cur.refresh_token, cur.session_id);
+  throw new Error(`Refresh falhou em todas as tentativas: ${lastErr}`);
 }
 
 export async function cognitoStatus() {
