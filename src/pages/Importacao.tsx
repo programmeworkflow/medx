@@ -11,9 +11,15 @@ import * as XLSX from "xlsx";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchCompetencias, fetchEmpresas, insertCompetencia, MESES } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { onlyDigits } from "@/lib/format";
 
-function normalizeCnpj(raw: string): string {
-  return String(raw).replace(/[^\d]/g, "");
+// Excel pode parsear CNPJ/CPF como number, perdendo leading zeros.
+// Se o resultado tiver 10-11 dígitos paddar pra 11 (CPF), 12-14 pra 14 (CNPJ).
+function normalizeCnpj(raw: string | number | null | undefined): string {
+  let d = onlyDigits(String(raw ?? ""));
+  if (d.length >= 12 && d.length <= 14) d = d.padStart(14, "0");
+  else if (d.length >= 9 && d.length <= 11) d = d.padStart(11, "0");
+  return d;
 }
 
 export default function Importacao() {
@@ -73,6 +79,13 @@ export default function Importacao() {
       const empresas = await fetchEmpresas();
       const empresasByCnpj = new Map(empresas.map((e) => [normalizeCnpj(e.cnpj), e]));
 
+      // Detecta planilha do ESO pelo domínio do link de fatura — quando é ESO,
+      // o "Valor Unitário*" vem como inteiro em centavos (ex: 30700 = R$ 307,00).
+      const isEsoExport = rows.some((r) => {
+        const link = String(r["Link"] || r["link"] || "");
+        return /sistemaeso\.com\.br/i.test(link);
+      });
+
       let found = 0;
       let newCompanies = 0;
       let total = 0;
@@ -84,9 +97,10 @@ export default function Importacao() {
         const rawValor = row["Valor Unitário*"] || row["Valor"] || row["valor"] || "0";
         const valorStr = String(rawValor).trim();
         let valor = 0;
-        if (!isNaN(Number(rawValor)) && typeof rawValor === "number") {
-          // XLSX parsed it as a number already
-          valor = rawValor;
+        if (typeof rawValor === "number" && !isNaN(rawValor)) {
+          // XLSX parsed it as a number. ESO exporta em centavos (sempre inteiro)
+          // — divide por 100 só nesse caso. Outras planilhas vêm em reais.
+          valor = isEsoExport && Number.isInteger(rawValor) ? rawValor / 100 : rawValor;
         } else if (valorStr.includes(",")) {
           // Brazilian format: "3.746,00" or "649,00"
           valor = parseFloat(valorStr.replace(/\./g, "").replace(",", "."));
