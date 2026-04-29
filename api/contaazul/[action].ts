@@ -342,8 +342,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // 3. Filtra sanity: ignora numeros >= 1_000_000 (foram setados errados)
       // 4. Tenta com (base + 1)
       // 5. Se CA rejeita "nº NNN é o próximo", usa NNN
-      const sb = supaAdmin();
-      const { data: prevVendas } = await sb
+      const sbVendas = supaAdmin();
+      const { data: prevVendas } = await sbVendas
         .from("contaazul_vendas")
         .select("raw")
         .not("raw", "is", null)
