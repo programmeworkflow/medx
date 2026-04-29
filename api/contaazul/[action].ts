@@ -136,19 +136,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (action === "services") {
-      // Lista serviços cadastrados (necessário pra classificar como "Receita de serviço")
-      // Filtra ATIVO + PRESTADO por padrão (uso normal de faturamento). ?all=1 traz todos.
-      const r = await caApi("GET", "/v1/servicos?perPage=200");
-      const items = r?.itens || r?.items || r?.content || [];
+      // Lista todos os serviços cadastrados, paginando até esgotar.
+      // Default: só ATIVOS (qualquer tipo_servico). ?all=1 traz inativos também.
+      // ?prestado_only=1 filtra só PRESTADO.
       const all = req.query.all === "1";
-      const filtered = all
-        ? items
-        : items.filter(
-            (s: any) =>
-              (s.status || "ATIVO") === "ATIVO" &&
-              (s.tipo_servico || "PRESTADO") === "PRESTADO"
-          );
+      const prestadoOnly = req.query.prestado_only === "1";
+      const accumulated: any[] = [];
+      for (let pagina = 1; pagina <= 20; pagina++) {
+        const r = await caApi("GET", `/v1/servicos?pagina=${pagina}&tamanho_pagina=100`);
+        const items = r?.itens || r?.items || r?.content || [];
+        if (!items.length) break;
+        accumulated.push(...items);
+        if (items.length < 100) break;
+      }
+      const filtered = accumulated.filter((s: any) => {
+        if (!all && (s.status || "ATIVO") !== "ATIVO") return false;
+        if (prestadoOnly && (s.tipo_servico || "PRESTADO") !== "PRESTADO") return false;
+        return true;
+      });
       return res.status(200).json({
+        total_no_ca: accumulated.length,
         items: filtered
           .map((s: any) => ({
             id: s.id,
