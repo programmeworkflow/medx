@@ -427,12 +427,30 @@ export async function cognitoStatus() {
   const sess = await loadCognitoSession();
   if (!sess) return { connected: false };
   const expiresAt = new Date(sess.expires_at).getTime();
+  let access_token_client_id = "?";
+  let access_token_token_use = "?";
+  let access_token_iat: string | null = null;
+  try {
+    const payload = JSON.parse(
+      Buffer.from(sess.access_token.split(".")[1], "base64url").toString("utf8")
+    );
+    access_token_client_id = payload.client_id || "?";
+    access_token_token_use = payload.token_use || "?";
+    access_token_iat = new Date((payload.iat || 0) * 1000).toISOString();
+  } catch {}
   return {
     connected: true,
     email: sess.email,
     access_token_expires_at: sess.expires_at,
     access_token_expires_in_seconds: Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)),
     session_id: sess.session_id,
+    debug: {
+      access_token_client_id,
+      access_token_token_use,
+      access_token_iat,
+      configured_client_id: CLIENT_ID,
+      has_client_secret: !!CLIENT_SECRET,
+    },
   };
 }
 
