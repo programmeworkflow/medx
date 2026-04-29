@@ -57,8 +57,15 @@ export default function ContaAzulPanel() {
   // form fields
   const [empresaId, setEmpresaId] = useState<string>("");
   const [servicoId, setServicoId] = useState<string>("");
+  const [categoriaId, setCategoriaId] = useState<string>("");
+  const [centroCustoOverride, setCentroCustoOverride] = useState<string>("");
   const [valor, setValor] = useState("");
   const [dataVenda, setDataVenda] = useState(new Date().toISOString().slice(0, 10));
+  const [dataVencimento, setDataVencimento] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return d.toISOString().slice(0, 10);
+  });
   // Mês de referência (default: mês anterior)
   const hoje = new Date();
   const mesAnterior = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1);
@@ -68,6 +75,8 @@ export default function ContaAzulPanel() {
   const [obs, setObs] = useState("");
   const [emitirNF, setEmitirNF] = useState(false);
   const [emitirBoleto, setEmitirBoleto] = useState(false);
+  // Cache de rótulos amigáveis (servicoId → rotulo) — evita chamada repetida da IA
+  const [rotuloCache, setRotuloCache] = useState<Record<string, string>>({});
 
   const { data: empresas = [] } = useQuery({ queryKey: ["empresas"], queryFn: fetchEmpresas });
   const { data: centros = [] } = useQuery({
@@ -85,6 +94,15 @@ export default function ContaAzulPanel() {
       const r = await fetch(`${API_BASE}/api/contaazul/services`);
       const j = await r.json();
       return (j?.items as { id: string; nome: string; valor?: number }[]) || [];
+    },
+    enabled: !!status?.connected,
+  });
+  const { data: categorias = [] } = useQuery({
+    queryKey: ["ca-categorias-receita"],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE}/api/contaazul/financial-categories?tipo=RECEITA`);
+      const j = await r.json();
+      return (j?.items as { id: string; nome: string }[]) || [];
     },
     enabled: !!status?.connected,
   });
@@ -110,8 +128,29 @@ export default function ContaAzulPanel() {
     for (const r of NOMES_AMIGAVEIS) if (r.match.test(limpo)) return r.out;
     return limpo;
   };
+  // Quando serviço muda, busca rótulo amigável via IA (se não estiver em cache)
+  useEffect(() => {
+    if (!servicoSelecionado || rotuloCache[servicoSelecionado.id]) return;
+    const nome = servicoSelecionado.nome || "";
+    const fallback = limparNomeServico(nome);
+    setRotuloCache((c) => ({ ...c, [servicoSelecionado.id]: fallback }));
+    fetch(`${API_BASE}/api/contaazul/nome-amigavel-servico`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nome }),
+    })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j?.rotulo) {
+          setRotuloCache((c) => ({ ...c, [servicoSelecionado.id]: j.rotulo }));
+        }
+      })
+      .catch(() => {});
+  }, [servicoSelecionado?.id]);
   const observacaoAutomatica = (() => {
-    const nome = limparNomeServico(servicoSelecionado?.nome || "—");
+    const nome = servicoSelecionado
+      ? rotuloCache[servicoSelecionado.id] || limparNomeServico(servicoSelecionado.nome)
+      : "—";
     const v = Number(valor.replace(",", ".") || 0);
     const valorFmt = v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     return `Referente ao(s) ${nome} do mês de ${MESES[mesRef - 1]}/${anoRef}\nValor total: R$ ${valorFmt}`;
@@ -236,11 +275,15 @@ export default function ContaAzulPanel() {
     if (!servicoId) return toast.error("Selecione o serviço");
     if (!valor) return toast.error("Informe o valor");
     const empresaCC = (empresa as any).centro_custo_id;
-    if (!empresaCC) {
+    const ccFinal = centroCustoOverride || empresaCC;
+    if (!ccFinal) {
       return toast.error(
-        `Empresa "${empresa.nome_empresa}" sem centro de custo cadastrado. Configure em Cadastros → Empresas.`
+        `Empresa "${empresa.nome_empresa}" sem centro de custo. Selecione um centro de custo abaixo ou cadastre em Cadastros → Empresas.`
       );
     }
+    const rotulo =
+      (servicoSelecionado && rotuloCache[servicoSelecionado.id]) ||
+      limparNomeServico(servicoSelecionado?.nome || "Serviço");
     const observacaoFinal = obs;
     setSubmitting(true);
     try {
@@ -250,11 +293,13 @@ export default function ContaAzulPanel() {
         body: JSON.stringify({
           cnpj: empresa.cnpj,
           razao_social: empresa.nome_empresa,
-          centro_custo_id: empresaCC,
+          centro_custo_id: ccFinal,
+          categoria_id: categoriaId || undefined,
           servico_id: servicoId,
-          servico: limparNomeServico(servicoSelecionado?.nome || "Serviço"),
+          servico: rotulo,
           valor: Number(valor.replace(",", ".")),
           data_venda: dataVenda,
+          data_vencimento: dataVencimento,
           observacoes: observacaoFinal,
           mes_referencia: mesRef,
           ano_referencia: anoRef,
@@ -272,7 +317,9 @@ export default function ContaAzulPanel() {
       else if (j?.boleto?.status === "erro") partes.push(`boleto erro: ${j.boleto.erro || "?"}`);
       toast.success(partes.join(" — "));
       setOpen(false);
-      setServicoId(""); setValor(""); setObs(""); setEmitirNF(false); setEmitirBoleto(false);
+      setServicoId(""); setValor(""); setObs("");
+      setCategoriaId(""); setCentroCustoOverride("");
+      setEmitirNF(false); setEmitirBoleto(false);
     } catch (e: any) {
       toast.error(`${e?.message}`);
     } finally {
@@ -491,13 +538,51 @@ export default function ContaAzulPanel() {
                     </Select>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Data da venda</Label>
-                  <Input
-                    type="date"
-                    value={dataVenda}
-                    onChange={(e) => setDataVenda(e.target.value)}
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Data da venda</Label>
+                    <Input
+                      type="date"
+                      value={dataVenda}
+                      onChange={(e) => setDataVenda(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Vencimento</Label>
+                    <Input
+                      type="date"
+                      value={dataVencimento}
+                      onChange={(e) => setDataVencimento(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Categoria financeira</Label>
+                    <Select value={categoriaId} onValueChange={setCategoriaId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder={categorias.length ? "Selecionar..." : "Carregando..."} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {categorias.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Centro de custo (override)</Label>
+                    <Select value={centroCustoOverride} onValueChange={setCentroCustoOverride}>
+                      <SelectTrigger>
+                        <SelectValue placeholder={centros.length ? "(usar do cadastro)" : "Carregando..."} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {centros.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2 flex-wrap">

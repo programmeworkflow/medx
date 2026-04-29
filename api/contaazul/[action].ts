@@ -128,11 +128,85 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const busca = (req.query.busca as string) || "";
       const r = await caApi(
         "GET",
-        busca ? `/v1/centro-de-custo?busca=${encodeURIComponent(busca)}` : "/v1/centro-de-custo?perPage=10"
+        busca ? `/v1/centro-de-custo?busca=${encodeURIComponent(busca)}` : "/v1/centro-de-custo?perPage=100"
       );
       return res.status(200).json({
         items: (r?.itens || []).map((c: any) => ({ id: c.id, nome: c.nome })),
       });
+    }
+
+    if (action === "financial-categories") {
+      // Lista categorias financeiras (RECEITA por default — pra venda).
+      // ?tipo=DESPESA pra despesa.
+      const tipo = (req.query.tipo as string) || "RECEITA";
+      const accumulated: any[] = [];
+      for (let pagina = 1; pagina <= 10; pagina++) {
+        const r = await caApi(
+          "GET",
+          `/v1/categorias?tipo=${tipo}&pagina=${pagina}&tamanho_pagina=100`
+        );
+        const items = r?.itens || r?.items || r?.content || (Array.isArray(r) ? r : []);
+        if (!items.length) break;
+        accumulated.push(...items);
+        if (items.length < 100) break;
+      }
+      return res.status(200).json({
+        items: accumulated
+          .map((c: any) => ({ id: c.id || c.uuid, nome: c.nome || c.descricao, tipo: c.tipo }))
+          .sort((a: any, b: any) => (a.nome || "").localeCompare(b.nome || "")),
+      });
+    }
+
+    if (action === "nome-amigavel-servico") {
+      // Recebe { nome } e devolve { rotulo } — nome curto pra observação da NF.
+      // 1) Tenta mapeamento regex (rápido, sem custo)
+      // 2) Se ANTHROPIC_API_KEY, pede pra Claude resumir
+      // 3) Fallback: nome limpo em minúsculo
+      const body: any = req.body || {};
+      const nome = String(body.nome || "");
+      const limpo = nome.replace(/\s*\([^)]*\)\s*$/g, "").trim();
+      const HARD: { match: RegExp; out: string }[] = [
+        { match: /exame/i, out: "Exames" },
+        { match: /treinamento/i, out: "Treinamentos" },
+        { match: /pcmso/i, out: "PCMSO" },
+        { match: /pgr/i, out: "PGR" },
+        { match: /elabora.*documento/i, out: "Documentos" },
+        { match: /gest.o.*sst/i, out: "Gestão de SST" },
+        { match: /assessoria.*sst/i, out: "Assessoria de SST" },
+        { match: /laudo/i, out: "Laudos" },
+        { match: /avalia/i, out: "Avaliações" },
+      ];
+      const hit = HARD.find((r) => r.match.test(limpo));
+      if (hit) return res.status(200).json({ rotulo: hit.out, fonte: "regex" });
+      if (!process.env.ANTHROPIC_API_KEY) {
+        return res.status(200).json({ rotulo: limpo, fonte: "fallback" });
+      }
+      try {
+        const r = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "x-api-key": process.env.ANTHROPIC_API_KEY!,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "claude-haiku-4-5-20251001",
+            max_tokens: 30,
+            messages: [
+              {
+                role: "user",
+                content:
+                  `Você recebe o nome técnico de um serviço de saúde ocupacional/SST e deve devolver um rótulo curto (1 a 3 palavras, capitalizado, em português) pra usar numa observação de nota fiscal. Devolva só o rótulo, sem aspas, sem explicação.\n\nNome técnico: ${limpo}`,
+              },
+            ],
+          }),
+        });
+        const j: any = await r.json();
+        const txt = (j?.content?.[0]?.text || "").trim();
+        return res.status(200).json({ rotulo: txt || limpo, fonte: "ai" });
+      } catch (_) {
+        return res.status(200).json({ rotulo: limpo, fonte: "fallback" });
+      }
     }
 
     if (action === "services") {
@@ -308,10 +382,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // 5. Cria venda em /v1/venda (Receita de Serviço — aceita NF e boleto)
       const dataVenda = body.data_venda || new Date().toISOString().slice(0, 10);
+      const dataVenc = body.data_vencimento || dataVenda;
       const valor = Number(body.valor);
       const contaRecebimentoId =
         process.env.CONTA_AZUL_FINANCIAL_ACCOUNT_ID ||
         "49e2c1f3-c117-4882-82d0-e9ae9795f882";
+      const categoriaId = body.categoria_id || undefined;
+      const centroCustoId = body.centro_custo_id || undefined;
       const buildPayload = (numero: number) => ({
         id_cliente: personId,
         numero,
@@ -332,10 +409,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             {
               numero_parcela: 1,
               valor,
-              data_vencimento: dataVenda,
+              data_vencimento: dataVenc,
               descricao: body.servico,
               forma_pagamento: "BOLETO_BANCARIO",
               id_conta: contaRecebimentoId,
+              ...(categoriaId ? { id_categoria: categoriaId } : {}),
+              ...(centroCustoId ? { id_centro_de_custo: centroCustoId } : {}),
             },
           ],
         },

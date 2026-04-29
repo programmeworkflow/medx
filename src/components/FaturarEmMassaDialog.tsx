@@ -55,12 +55,13 @@ interface Linha {
   // editáveis
   selected: boolean;
   centroCustoId: string;
+  dataVencimento: string;
   retencao: RetencaoPadrao;
   emitirNF: boolean;
   emitirBoleto: boolean;
 }
 
-export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto[] }) {
+export default function FaturarEmMassaDialog({ centros: _centros }: { centros: CentroCusto[] }) {
   const [open, setOpen] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
@@ -76,7 +77,14 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
   const empresasById = useMemo(() => new Map(empresas.map((e: any) => [e.id, e])), [empresas]);
 
   const [servicoPadrao, setServicoPadrao] = useState<string>("");
-  // Mês de referência padrão = mês da competência aberta (ou mês anterior)
+  const [categoriaPadrao, setCategoriaPadrao] = useState<string>("");
+  const [centroCustoPadrao, setCentroCustoPadrao] = useState<string>("");
+  // Vencimento padrão = hoje + 7 (formato YYYY-MM-DD)
+  const [dataVencPadrao, setDataVencPadrao] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return d.toISOString().slice(0, 10);
+  });
   const hojeBatch = new Date();
   const [mesRefBatch, setMesRefBatch] = useState<number>(
     compAtual?.mes ?? new Date(hojeBatch.getFullYear(), hojeBatch.getMonth() - 1, 1).getMonth() + 1
@@ -90,6 +98,26 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
     queryKey: ["ca-servicos"],
     queryFn: async () => {
       const r = await fetch("/api/contaazul/services");
+      const j = await r.json();
+      return (j?.items as { id: string; nome: string }[]) || [];
+    },
+    enabled: open,
+  });
+
+  const { data: categorias = [] } = useQuery({
+    queryKey: ["ca-categorias-receita"],
+    queryFn: async () => {
+      const r = await fetch("/api/contaazul/financial-categories?tipo=RECEITA");
+      const j = await r.json();
+      return (j?.items as { id: string; nome: string }[]) || [];
+    },
+    enabled: open,
+  });
+
+  const { data: centrosCustoCA = [] } = useQuery({
+    queryKey: ["ca-cost-centers"],
+    queryFn: async () => {
+      const r = await fetch("/api/contaazul/cost-centers");
       const j = await r.json();
       return (j?.items as { id: string; nome: string }[]) || [];
     },
@@ -125,6 +153,7 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
           semCadastro,
           selected: !semCadastro,
           centroCustoId: empresa?.centro_custo_id || "",
+          dataVencimento: dataVencPadrao,
           retencao: retPadrao,
           emitirNF: !!empresa?.emitir_nf_padrao,
           emitirBoleto: false,
@@ -132,6 +161,15 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
       });
     setLinhas(novas);
   }, [faturamentos, empresasById]);
+
+  // Quando user muda data padrão, propaga pra todas as linhas que ainda
+  // estavam com a data antiga (não sobrescreve customizações manuais).
+  const aplicarDataVencPadrao = (nova: string) => {
+    setLinhas((prev) =>
+      prev.map((l) => (l.dataVencimento === dataVencPadrao ? { ...l, dataVencimento: nova } : l))
+    );
+    setDataVencPadrao(nova);
+  };
 
   const semCadastroList = linhas.filter((l) => l.semCadastro);
   const validas = linhas.filter((l) => !l.semCadastro);
@@ -150,20 +188,17 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
     if (selecionadas.length === 0) return toast.error("Nenhuma linha selecionada");
     if (!servicoPadrao) return toast.error("Selecione o serviço");
     const servicoNomeRaw = servicos.find((s) => s.id === servicoPadrao)?.nome || "Serviço";
-    // Mapeia nome técnico do CA pra rótulo curto na observação da NF
-    // (ex: "EXAMES OCUPACIONAIS (Sem Retenção de ISS)" → "Exames")
-    const NOMES_AMIGAVEIS: { match: RegExp; out: string }[] = [
-      { match: /exame/i, out: "Exames" },
-      { match: /treinamento/i, out: "Treinamentos" },
-      { match: /pcmso/i, out: "PCMSO" },
-      { match: /pgr/i, out: "PGR" },
-      { match: /elabora.*documento/i, out: "Documentos" },
-      { match: /gest.o.*sst/i, out: "Gestão de SST" },
-      { match: /assessoria.*sst/i, out: "Assessoria de SST" },
-    ];
-    const limpo = servicoNomeRaw.replace(/\s*\([^)]*\)\s*$/g, "").trim();
-    const servicoNome =
-      NOMES_AMIGAVEIS.find((r) => r.match.test(limpo))?.out || limpo;
+    // Pede rótulo amigável (regex/IA) ao backend pra usar na observação da NF
+    let servicoNome = servicoNomeRaw.replace(/\s*\([^)]*\)\s*$/g, "").trim();
+    try {
+      const rIA = await fetch("/api/contaazul/nome-amigavel-servico", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nome: servicoNomeRaw }),
+      });
+      const j = await rIA.json();
+      if (j?.rotulo) servicoNome = j.rotulo;
+    } catch (_) {}
     setProgress({ done: 0, total: selecionadas.length });
     let ok = 0;
     let fail = 0;
@@ -180,11 +215,13 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
           body: JSON.stringify({
             cnpj: l.cnpj,
             razao_social: l.nome,
-            centro_custo_id: l.centroCustoId,
+            centro_custo_id: l.centroCustoId || centroCustoPadrao || undefined,
+            categoria_id: categoriaPadrao || undefined,
             servico_id: servicoPadrao,
             servico: servicoNome,
             valor: l.valor,
             data_venda: new Date().toISOString().slice(0, 10),
+            data_vencimento: l.dataVencimento || dataVencPadrao,
             observacoes: observacaoNF,
             mes_referencia: mesRefBatch,
             ano_referencia: anoRefBatch,
@@ -245,11 +282,11 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
           </div>
         )}
 
-        <div className="flex items-center gap-3 flex-wrap py-2">
-          <div className="flex items-center gap-2">
-            <Label className="text-xs">Serviço:</Label>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 py-2">
+          <div className="space-y-1">
+            <Label className="text-xs">Serviço</Label>
             <Select value={servicoPadrao} onValueChange={setServicoPadrao}>
-              <SelectTrigger className="w-[260px] h-8">
+              <SelectTrigger className="h-9">
                 <SelectValue placeholder={servicos.length ? "Selecionar..." : "Carregando..."} />
               </SelectTrigger>
               <SelectContent>
@@ -259,28 +296,67 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
               </SelectContent>
             </Select>
           </div>
-          <div className="flex items-center gap-2">
-            <Label className="text-xs">Mês ref.:</Label>
-            <Select value={String(mesRefBatch)} onValueChange={(v) => setMesRefBatch(Number(v))}>
-              <SelectTrigger className="w-[130px] h-8"><SelectValue /></SelectTrigger>
+          <div className="space-y-1">
+            <Label className="text-xs">Categoria financeira</Label>
+            <Select value={categoriaPadrao} onValueChange={setCategoriaPadrao}>
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder={categorias.length ? "Selecionar..." : "Carregando..."} />
+              </SelectTrigger>
               <SelectContent>
-                {MESES.map((m, i) => (
-                  <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={String(anoRefBatch)} onValueChange={(v) => setAnoRefBatch(Number(v))}>
-              <SelectTrigger className="w-[90px] h-8"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {[hojeBatch.getFullYear() - 1, hojeBatch.getFullYear(), hojeBatch.getFullYear() + 1].map((a) => (
-                  <SelectItem key={a} value={String(a)}>{a}</SelectItem>
+                {categorias.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
-          <Badge variant="secondary">
-            {selecionadas.length} de {validas.length} | Total: {fmtBRL(totalSelecionado)}
-          </Badge>
+          <div className="space-y-1">
+            <Label className="text-xs">Centro de custo padrão</Label>
+            <Select value={centroCustoPadrao} onValueChange={setCentroCustoPadrao}>
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder={centrosCustoCA.length ? "(usar do cadastro)" : "Carregando..."} />
+              </SelectTrigger>
+              <SelectContent>
+                {centrosCustoCA.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Vencimento padrão</Label>
+            <Input
+              type="date"
+              className="h-9"
+              value={dataVencPadrao}
+              onChange={(e) => aplicarDataVencPadrao(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Mês ref.</Label>
+            <div className="flex gap-2">
+              <Select value={String(mesRefBatch)} onValueChange={(v) => setMesRefBatch(Number(v))}>
+                <SelectTrigger className="h-9 flex-1"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {MESES.map((m, i) => (
+                    <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={String(anoRefBatch)} onValueChange={(v) => setAnoRefBatch(Number(v))}>
+                <SelectTrigger className="h-9 w-[90px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[hojeBatch.getFullYear() - 1, hojeBatch.getFullYear(), hojeBatch.getFullYear() + 1].map((a) => (
+                    <SelectItem key={a} value={String(a)}>{a}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-1 flex flex-col justify-end">
+            <Badge variant="secondary" className="self-start">
+              {selecionadas.length} de {validas.length} | Total: {fmtBRL(totalSelecionado)}
+            </Badge>
+          </div>
         </div>
 
         <div className="border rounded-lg overflow-x-auto">
@@ -296,6 +372,7 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
                 <TableHead>Empresa</TableHead>
                 <TableHead>CNPJ</TableHead>
                 <TableHead className="text-right">Valor</TableHead>
+                <TableHead>Vencimento</TableHead>
                 <TableHead>Retenção</TableHead>
                 <TableHead className="text-center">NF</TableHead>
                 <TableHead className="text-center">Boleto</TableHead>
@@ -321,6 +398,15 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
                   </TableCell>
                   <TableCell className="font-mono text-xs">{formatCnpjCpf(l.cnpj)}</TableCell>
                   <TableCell className="text-right">{fmtBRL(l.valor)}</TableCell>
+                  <TableCell>
+                    <Input
+                      type="date"
+                      className="h-8 w-[140px] text-xs"
+                      value={l.dataVencimento}
+                      onChange={(e) => updateLinha(l.faturamentoId, { dataVencimento: e.target.value })}
+                      disabled={l.semCadastro}
+                    />
+                  </TableCell>
                   <TableCell>
                     <Select
                       value={l.retencao}
@@ -354,7 +440,7 @@ export default function FaturarEmMassaDialog({ centros }: { centros: CentroCusto
               ))}
               {linhas.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                     Nenhum faturamento pendente para a competência atual.
                   </TableCell>
                 </TableRow>
