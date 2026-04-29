@@ -732,7 +732,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ ok: false, step: "lookup-sale", status: info.status, text: info.text });
       }
       const sale: any = info.data || {};
+      // financialEvent.paymentCondition.installments é o único path que tem id+version
       const installments: any[] =
+        sale.financialEvent?.paymentCondition?.installments ||
+        (sale.financialEvents?.[0]?.paymentCondition?.installments) ||
         sale.installments || sale.parcelas || sale.paymentCondition?.installments || [];
       if (!installments.length) {
         return res.status(200).json({
