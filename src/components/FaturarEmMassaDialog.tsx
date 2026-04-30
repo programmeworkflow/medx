@@ -66,7 +66,14 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   const { data: competencias = [] } = useQuery({ queryKey: ["competencias"], queryFn: fetchCompetencias });
-  const compAtual = competencias.find((c) => c.status === "aberto") || competencias[0];
+  // Competência selecionada — default = aberta (ou mais recente)
+  const [compId, setCompId] = useState<string>("");
+  useEffect(() => {
+    if (compId) return;
+    const aberta = competencias.find((c) => c.status === "aberto") || competencias[0];
+    if (aberta?.id) setCompId(aberta.id);
+  }, [competencias, compId]);
+  const compAtual = competencias.find((c) => c.id === compId);
 
   const { data: faturamentos = [] } = useQuery({
     queryKey: ["faturamentos", compAtual?.id],
@@ -94,41 +101,57 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
   );
   const [linhas, setLinhas] = useState<Linha[]>([]);
 
-  const { data: servicos = [] } = useQuery({
+  const servicosQ = useQuery({
     queryKey: ["ca-servicos"],
     queryFn: async () => {
       const r = await fetch("/api/contaazul/services");
+      if (!r.ok) throw new Error(`services HTTP ${r.status}`);
       const j = await r.json();
       return (j?.items as { id: string; nome: string }[]) || [];
     },
     enabled: open,
   });
+  const servicos = servicosQ.data || [];
 
-  const { data: categorias = [] } = useQuery({
+  const categoriasQ = useQuery({
     queryKey: ["ca-categorias-receita"],
     queryFn: async () => {
       const r = await fetch("/api/contaazul/financial-categories?tipo=RECEITA");
+      if (!r.ok) throw new Error(`categories HTTP ${r.status}`);
       const j = await r.json();
       return (j?.items as { id: string; nome: string }[]) || [];
     },
     enabled: open,
   });
+  const categorias = categoriasQ.data || [];
 
-  const { data: centrosCustoCA = [] } = useQuery({
+  const centrosCC_Q = useQuery({
     queryKey: ["ca-cost-centers"],
     queryFn: async () => {
       const r = await fetch("/api/contaazul/cost-centers");
+      if (!r.ok) throw new Error(`cost-centers HTTP ${r.status}`);
       const j = await r.json();
       return (j?.items as { id: string; nome: string }[]) || [];
     },
     enabled: open,
   });
+  const centrosCustoCA = centrosCC_Q.data || [];
 
-  // Sincroniza mês/ano com a competência atual quando o dialog abrir
+  const placeholder = (
+    q: { isLoading: boolean; isError: boolean; data: unknown },
+    emptyMsg = "Sem itens"
+  ) => {
+    if (q.isLoading) return "Carregando...";
+    if (q.isError) return "Erro ao carregar";
+    if (!q.data || (Array.isArray(q.data) && q.data.length === 0)) return emptyMsg;
+    return "Selecionar...";
+  };
+
+  // Sincroniza mês/ano com a competência selecionada (sempre que muda)
   useEffect(() => {
     if (compAtual?.mes) setMesRefBatch(compAtual.mes);
     if (compAtual?.ano) setAnoRefBatch(compAtual.ano);
-  }, [compAtual?.mes, compAtual?.ano]);
+  }, [compAtual?.id]);
 
   // Constroi as linhas a partir dos faturamentos pendentes — centro de custo
   // vem do cadastro da empresa (configurado em Cadastros → Empresas)
@@ -259,7 +282,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
       <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display">
-            Faturar em massa — {compAtual ? `${MESES[compAtual.mes - 1]}/${compAtual.ano}` : "—"}
+            Faturar em massa{compAtual ? ` — ${MESES[compAtual.mes - 1]}/${compAtual.ano}` : ""}
           </DialogTitle>
         </DialogHeader>
 
@@ -284,10 +307,26 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 py-2">
           <div className="space-y-1">
+            <Label className="text-xs">Competência</Label>
+            <Select value={compId} onValueChange={setCompId}>
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder="Selecionar..." />
+              </SelectTrigger>
+              <SelectContent>
+                {competencias.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {MESES[c.mes - 1]}/{c.ano}
+                    {c.status === "aberto" ? " · aberta" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
             <Label className="text-xs">Serviço</Label>
             <Select value={servicoPadrao} onValueChange={setServicoPadrao}>
               <SelectTrigger className="h-9">
-                <SelectValue placeholder={servicos.length ? "Selecionar..." : "Carregando..."} />
+                <SelectValue placeholder={placeholder(servicosQ)} />
               </SelectTrigger>
               <SelectContent>
                 {servicos.map((s) => (
@@ -300,7 +339,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
             <Label className="text-xs">Categoria financeira</Label>
             <Select value={categoriaPadrao} onValueChange={setCategoriaPadrao}>
               <SelectTrigger className="h-9">
-                <SelectValue placeholder={categorias.length ? "Selecionar..." : "Carregando..."} />
+                <SelectValue placeholder={placeholder(categoriasQ)} />
               </SelectTrigger>
               <SelectContent>
                 {categorias.map((c) => (
@@ -313,7 +352,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
             <Label className="text-xs">Centro de custo padrão</Label>
             <Select value={centroCustoPadrao} onValueChange={setCentroCustoPadrao}>
               <SelectTrigger className="h-9">
-                <SelectValue placeholder={centrosCustoCA.length ? "(usar do cadastro)" : "Carregando..."} />
+                <SelectValue placeholder={placeholder(centrosCC_Q, "(usar do cadastro)")} />
               </SelectTrigger>
               <SelectContent>
                 {centrosCustoCA.map((c) => (
