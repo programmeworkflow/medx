@@ -79,7 +79,11 @@ export default function Importacao() {
         n.toLowerCase().includes("aso") && n.toLowerCase().includes("valor")
       ) || wb.SheetNames.find((n) => n.toLowerCase().includes("aso")) || wb.SheetNames[0];
       const ws = wb.Sheets[sheetName];
-      const rows: any[] = XLSX.utils.sheet_to_json(ws);
+      // raw:false faz o XLSX retornar o TEXTO formatado da célula
+      // (ex: "80,00") em vez do número bruto. Necessário porque algumas
+      // planilhas armazenam moeda em centavos e mostram formatado — sem
+      // isso, "80,00" exibido virava 8000 ao ler.
+      const rows: any[] = XLSX.utils.sheet_to_json(ws, { raw: false });
 
       const empresas = await fetchEmpresas();
       const empresasByCnpj = new Map(empresas.map((e) => [normalizeCnpj(e.cnpj), e]));
@@ -138,11 +142,15 @@ export default function Importacao() {
           } else {
             valor = rawValor;
           }
-        } else if (valorStr.includes(",")) {
-          // Brazilian format: "3.746,00" or "649,00"
-          valor = parseFloat(valorStr.replace(/\./g, "").replace(",", "."));
         } else {
-          valor = parseFloat(valorStr);
+          // Texto: limpa "R$", espaços, separadores brasileiros (ponto = milhar,
+          // vírgula = decimal). Cobre "R$ 80,00", "80,00", "8.000,00", "80.00".
+          const limpo = valorStr.replace(/R\$\s?/i, "").replace(/\s/g, "");
+          if (limpo.includes(",")) {
+            valor = parseFloat(limpo.replace(/\./g, "").replace(",", "."));
+          } else {
+            valor = parseFloat(limpo);
+          }
         }
         if (isNaN(valor)) valor = 0;
         const linkEso = row["Link"] || row["link"] || null;
