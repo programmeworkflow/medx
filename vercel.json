@@ -21,7 +21,7 @@
     },
     {
       "path": "/api/contaazul/health-check",
-      "schedule": "13 9 * * 1"
+      "schedule": "7 11 * * 1"
     }
   ]
 }
