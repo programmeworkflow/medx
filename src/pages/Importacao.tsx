@@ -28,7 +28,12 @@ export default function Importacao() {
   const [mesSelecionado, setMesSelecionado] = useState("");
   const [anoSelecionado, setAnoSelecionado] = useState(new Date().getFullYear().toString());
   const [processing, setProcessing] = useState(false);
-  const [result, setResult] = useState<{ found: number; newCompanies: number; total: number } | null>(null);
+  const [result, setResult] = useState<{
+    found: number;
+    newCompanies: number;
+    total: number;
+    centavosCorrigidos?: number;
+  } | null>(null);
   const queryClient = useQueryClient();
   const { user } = useAuth();
 
@@ -86,9 +91,36 @@ export default function Importacao() {
         return /sistemaeso\.com\.br/i.test(link);
       });
 
+      // Heurística adicional: se TODOS os valores numéricos forem inteiros
+      // (sem casa decimal) E pelo menos um for >= 100, a planilha provavelmente
+      // está em centavos — divide por 100. Cobre planilhas que não vêm do ESO
+      // mas seguem o mesmo padrão (ex: exportações genéricas que serializam
+      // moeda como inteiro de centavos).
+      let todosInteirosNaoZero = true;
+      let temGrande = false;
+      let temNumero = false;
+      for (const r of rows) {
+        const raw = r["Valor Unitário*"] || r["Valor"] || r["valor"];
+        if (raw == null || raw === "") continue;
+        if (typeof raw === "number" && !isNaN(raw) && raw > 0) {
+          temNumero = true;
+          if (!Number.isInteger(raw)) {
+            todosInteirosNaoZero = false;
+            break;
+          }
+          if (raw >= 100) temGrande = true;
+        } else if (typeof raw === "string" && raw.includes(",")) {
+          // Já tem decimal explícito ("80,00") — não é centavos
+          todosInteirosNaoZero = false;
+          break;
+        }
+      }
+      const looksLikeCentavos = isEsoExport || (temNumero && todosInteirosNaoZero && temGrande);
+
       let found = 0;
       let newCompanies = 0;
       let total = 0;
+      let centavosCorrigidos = 0;
 
       for (const row of rows) {
         // Map columns by header name (with fallbacks for different ESO formats)
@@ -98,9 +130,14 @@ export default function Importacao() {
         const valorStr = String(rawValor).trim();
         let valor = 0;
         if (typeof rawValor === "number" && !isNaN(rawValor)) {
-          // XLSX parsed it as a number. ESO exporta em centavos (sempre inteiro)
-          // — divide por 100 só nesse caso. Outras planilhas vêm em reais.
-          valor = isEsoExport && Number.isInteger(rawValor) ? rawValor / 100 : rawValor;
+          // Inteiros vêm em centavos quando a planilha é do ESO ou foi
+          // detectada como centavos pela heurística (todos inteiros + ≥100)
+          if (looksLikeCentavos && Number.isInteger(rawValor)) {
+            valor = rawValor / 100;
+            if (rawValor > 0) centavosCorrigidos++;
+          } else {
+            valor = rawValor;
+          }
         } else if (valorStr.includes(",")) {
           // Brazilian format: "3.746,00" or "649,00"
           valor = parseFloat(valorStr.replace(/\./g, "").replace(",", "."));
@@ -172,8 +209,12 @@ export default function Importacao() {
       queryClient.invalidateQueries({ queryKey: ["faturamentos"] });
       queryClient.invalidateQueries({ queryKey: ["empresas"] });
       queryClient.invalidateQueries({ queryKey: ["competencias"] });
-      setResult({ found, newCompanies, total });
-      toast.success(`${total} empresas processadas!`);
+      setResult({ found, newCompanies, total, centavosCorrigidos });
+      const msgCentavos =
+        centavosCorrigidos > 0
+          ? ` · ${centavosCorrigidos} valor(es) ajustado(s) de centavos pra reais`
+          : "";
+      toast.success(`${total} empresas processadas!${msgCentavos}`);
     } catch (err: any) {
       toast.error("Erro ao processar: " + err.message);
     } finally {
@@ -293,6 +334,11 @@ export default function Importacao() {
                   <p className="text-sm text-muted-foreground">
                     {result.total} empresas processadas • {result.found} com cadastro • {result.newCompanies} sem cadastro (precisam ser classificadas)
                   </p>
+                  {result.centavosCorrigidos ? (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      💡 Detectei valores em centavos — {result.centavosCorrigidos} valor(es) ajustado(s) (÷100)
+                    </p>
+                  ) : null}
                 </div>
               </CardContent>
             </Card>
