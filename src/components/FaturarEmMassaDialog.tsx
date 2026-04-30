@@ -85,7 +85,6 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
 
   const [servicoPadrao, setServicoPadrao] = useState<string>("");
   const [categoriaPadrao, setCategoriaPadrao] = useState<string>("");
-  const [centroCustoPadrao, setCentroCustoPadrao] = useState<string>("");
   // Vencimento padrão = hoje + 7 (formato YYYY-MM-DD)
   const [dataVencPadrao, setDataVencPadrao] = useState<string>(() => {
     const d = new Date();
@@ -124,18 +123,6 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
     enabled: open,
   });
   const categorias = categoriasQ.data || [];
-
-  const centrosCC_Q = useQuery({
-    queryKey: ["ca-cost-centers"],
-    queryFn: async () => {
-      const r = await fetch("/api/contaazul/cost-centers");
-      if (!r.ok) throw new Error(`cost-centers HTTP ${r.status}`);
-      const j = await r.json();
-      return (j?.items as { id: string; nome: string }[]) || [];
-    },
-    enabled: open,
-  });
-  const centrosCustoCA = centrosCC_Q.data || [];
 
   const placeholder = (
     q: { isLoading: boolean; isError: boolean; data: unknown },
@@ -238,7 +225,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
           body: JSON.stringify({
             cnpj: l.cnpj,
             razao_social: l.nome,
-            centro_custo_id: l.centroCustoId || centroCustoPadrao || undefined,
+            centro_custo_id: l.centroCustoId || undefined,
             categoria_id: categoriaPadrao || undefined,
             servico_id: servicoPadrao,
             servico: servicoNome,
@@ -343,19 +330,6 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
               </SelectTrigger>
               <SelectContent>
                 {categorias.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Centro de custo padrão</Label>
-            <Select value={centroCustoPadrao} onValueChange={setCentroCustoPadrao}>
-              <SelectTrigger className="h-9">
-                <SelectValue placeholder={placeholder(centrosCC_Q, "(usar do cadastro)")} />
-              </SelectTrigger>
-              <SelectContent>
-                {centrosCustoCA.map((c) => (
                   <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
                 ))}
               </SelectContent>
