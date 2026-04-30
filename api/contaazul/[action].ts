@@ -150,12 +150,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!info.ok) {
         return res.status(500).json({ error: `lookup venda falhou: ${info.status}` });
       }
+      // CA usa "negotiatorId" como ID do cliente da venda. Caminhos alternativos
+      // pra robustez se a estrutura mudar.
       const customerId =
+        info.data?.negotiatorId ||
+        info.data?.negotiator?.uuid ||
         info.data?.customer?.id ||
         info.data?.customerId ||
         info.data?.financialEvent?.paymentCondition?.installments?.[0]?.chargeRequests?.[0]?.customerId;
       if (!customerId) {
-        return res.status(500).json({ error: "customerId não encontrado na venda" });
+        return res.status(500).json({ error: "customerId/negotiatorId não encontrado na venda" });
       }
 
       // 2. Resolve emails: se body.emails veio, usa. Senão pede ao billing-contact.
