@@ -16,6 +16,7 @@ import {
   fetchEmpresas,
   updateFaturamentoStatus,
   updateFaturamento,
+  deleteManyFaturamentos,
   MESES,
   CATEGORIA_LABELS,
   STATUS_LABELS,
@@ -113,6 +114,20 @@ export default function Faturamento() {
     queryClient.invalidateQueries({ queryKey: ["faturamentos", compId] });
     queryClient.invalidateQueries({ queryKey: ["competencias"] });
     toast.success(`${selectedIds.size} empresas concluídas!`);
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Excluir ${selectedIds.size} faturamento(s)? Essa ação não pode ser desfeita.`)) return;
+    try {
+      const n = await deleteManyFaturamentos(Array.from(selectedIds));
+      setSelectedIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ["faturamentos", compId] });
+      queryClient.invalidateQueries({ queryKey: ["competencias"] });
+      toast.success(`${n} faturamento(s) excluído(s)`);
+    } catch (e: any) {
+      toast.error(`Erro ao excluir: ${e?.message || "?"}`);
+    }
   };
 
   // Re-vincula faturamentos sem_cadastro a empresas que ganharam cadastro depois.
@@ -307,10 +322,13 @@ export default function Faturamento() {
 
       {/* Bulk actions */}
       {selectedIds.size > 0 && (
-        <div className="flex items-center gap-3 p-3 rounded-lg bg-primary/10 border border-primary/20">
+        <div className="flex items-center gap-3 p-3 rounded-lg bg-primary/10 border border-primary/20 flex-wrap">
           <span className="text-sm font-medium">{selectedIds.size} selecionadas</span>
           <Button size="sm" onClick={handleBulkConcluir}>
             <CheckCircle className="h-4 w-4 mr-1" /> Concluir Selecionadas
+          </Button>
+          <Button size="sm" variant="destructive" onClick={handleBulkDelete}>
+            <Trash2 className="h-4 w-4 mr-1" /> Excluir Selecionadas
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>Limpar</Button>
         </div>

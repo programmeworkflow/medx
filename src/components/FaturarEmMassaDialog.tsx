@@ -27,7 +27,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AlertTriangle, Wallet } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ExternalLink, Wallet, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { formatCnpjCpf } from "@/lib/format";
 import {
@@ -45,6 +45,15 @@ const fmtBRL = (v: number) =>
 interface CentroCusto { id: string; nome: string; }
 
 type NfModo = "nao_emite" | "manual" | "automatica";
+
+interface Resultado {
+  ok: boolean;
+  vendaNumero?: number;
+  vendaId?: string;
+  nf: { status: string; erro?: string };
+  boleto: { status: string; erro?: string };
+  fatal?: string; // se a venda em si falhou (cadastro/auth/CA)
+}
 
 interface Linha {
   faturamentoId: string;
@@ -102,6 +111,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
     compAtual?.ano ?? hojeBatch.getFullYear()
   );
   const [linhas, setLinhas] = useState<Linha[]>([]);
+  const [resultados, setResultados] = useState<Record<string, Resultado>>({});
 
   const servicosQ = useQuery({
     queryKey: ["ca-servicos"],
@@ -209,7 +219,6 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
     if (selecionadas.length === 0) return toast.error("Nenhuma linha selecionada");
     if (!servicoPadrao) return toast.error("Selecione o serviço");
     const servicoNomeRaw = servicos.find((s) => s.id === servicoPadrao)?.nome || "Serviço";
-    // Pede rótulo amigável (regex/IA) ao backend pra usar na observação da NF
     let servicoNome = servicoNomeRaw.replace(/\s*\([^)]*\)\s*$/g, "").trim();
     try {
       const rIA = await fetch("/api/contaazul/nome-amigavel-servico", {
@@ -221,11 +230,12 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
       if (j?.rotulo) servicoNome = j.rotulo;
     } catch (_) {}
     setProgress({ done: 0, total: selecionadas.length });
+    setResultados({});
     let ok = 0;
     let fail = 0;
-    const errors: { nome: string; erro: string }[] = [];
     for (let i = 0; i < selecionadas.length; i++) {
       const l = selecionadas[i];
+      let res: Resultado;
       try {
         const ret = calcularRetencao(l.categoria, l.valor, l.retencao);
         const valorFmt = l.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -252,21 +262,47 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
           }),
         });
         const j = await r.json();
-        if (!r.ok || !j.ok) throw new Error(j.error || "erro");
-        ok++;
+        if (!r.ok || !j.ok) {
+          res = {
+            ok: false,
+            nf: { status: "nao_solicitada" },
+            boleto: { status: "nao_solicitado" },
+            fatal: j.error || `HTTP ${r.status}`,
+          };
+        } else {
+          const nfStatus = j.nf?.status || "nao_solicitada";
+          const boletoStatus = j.boleto?.status || "nao_solicitado";
+          // OK se a venda foi criada e (NF/Boleto solicitados não falharam)
+          const nfFalhou = l.emitirNF && nfStatus === "erro";
+          const boletoFalhou = l.emitirBoleto && boletoStatus === "erro";
+          res = {
+            ok: !nfFalhou && !boletoFalhou,
+            vendaNumero: j.venda?.numero,
+            vendaId: j.venda?.id,
+            nf: { status: nfStatus, erro: j.nf?.erro },
+            boleto: { status: boletoStatus, erro: j.boleto?.erro },
+          };
+        }
       } catch (e: any) {
-        fail++;
-        errors.push({ nome: l.nome, erro: e?.message || "erro" });
+        res = {
+          ok: false,
+          nf: { status: "nao_solicitada" },
+          boleto: { status: "nao_solicitado" },
+          fatal: e?.message || "erro",
+        };
       }
+      setResultados((prev) => ({ ...prev, [l.faturamentoId]: res }));
+      if (res.ok) ok++;
+      else fail++;
       setProgress({ done: i + 1, total: selecionadas.length });
     }
     setProgress(null);
+    // Atualiza status local dos faturamentos que deram OK pra "concluido"
+    // (atualização persistente fica a cargo da página Faturamento via reload).
     if (fail === 0) {
-      toast.success(`${ok} faturamento(s) criado(s) na Conta Azul!`);
-      setOpen(false);
+      toast.success(`Todos os ${ok} faturamento(s) criados com sucesso!`);
     } else {
-      toast.error(`${ok} OK / ${fail} falharam — ver detalhes`);
-      console.error("Falhas:", errors);
+      toast.error(`${ok} OK · ${fail} com erro — confira na coluna Resultado`);
     }
   };
 
@@ -400,6 +436,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
                 <TableHead>Retenção</TableHead>
                 <TableHead className="text-center">NF</TableHead>
                 <TableHead className="text-center">Boleto</TableHead>
+                <TableHead className="min-w-[200px]">Resultado</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -461,11 +498,14 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
                       disabled={l.semCadastro}
                     />
                   </TableCell>
+                  <TableCell>
+                    <ResultadoCelula resultado={resultados[l.faturamentoId]} />
+                  </TableCell>
                 </TableRow>
               ))}
               {linhas.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                     Nenhum faturamento pendente para a competência atual.
                   </TableCell>
                 </TableRow>
@@ -494,5 +534,67 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ResultadoCelula({ resultado }: { resultado?: Resultado }) {
+  if (!resultado) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  if (resultado.fatal) {
+    return (
+      <div className="flex items-start gap-1.5">
+        <XCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+        <div className="text-xs">
+          <div className="font-medium text-destructive">Falhou</div>
+          <div className="text-muted-foreground line-clamp-2" title={resultado.fatal}>
+            {resultado.fatal}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  const Icon = resultado.ok ? CheckCircle2 : AlertTriangle;
+  const cor = resultado.ok ? "text-success" : "text-warning";
+  const labelNF =
+    resultado.nf.status === "emitida"
+      ? "NF emitida"
+      : resultado.nf.status === "em_processamento"
+      ? "NF em processamento"
+      : resultado.nf.status === "erro"
+      ? `NF erro: ${resultado.nf.erro || "?"}`
+      : null;
+  const labelBoleto =
+    resultado.boleto.status === "solicitado" || resultado.boleto.status === "emitido"
+      ? "Boleto OK"
+      : resultado.boleto.status === "ja_emitido"
+      ? "Boleto já existia"
+      : resultado.boleto.status === "aguardando_confirmacao"
+      ? "Boleto aguardando"
+      : resultado.boleto.status === "erro"
+      ? `Boleto erro: ${resultado.boleto.erro || "?"}`
+      : null;
+  return (
+    <div className="flex items-start gap-1.5">
+      <Icon className={`h-4 w-4 ${cor} mt-0.5 shrink-0`} />
+      <div className="text-xs">
+        <div className="font-medium flex items-center gap-1.5">
+          {resultado.vendaNumero ? `Venda #${resultado.vendaNumero}` : "Venda criada"}
+          {resultado.vendaId && (
+            <a
+              href={`https://app.contaazul.com/#/Vendas/${resultado.vendaId}`}
+              target="_blank"
+              rel="noreferrer"
+              title="Abrir no Conta Azul"
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+        </div>
+        {labelNF && <div className="text-muted-foreground">{labelNF}</div>}
+        {labelBoleto && <div className="text-muted-foreground">{labelBoleto}</div>}
+      </div>
+    </div>
   );
 }
