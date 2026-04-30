@@ -224,21 +224,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         "medwork.financeiro@gmail.com";
       const senderName = body.senderName || ownerName;
 
-      // 4. POST do envio — title/content/senderEmail no nível raiz
-      // (CA reclama "Conteúdo do email, Assunto do email, Email pra retorno"
-      // se faltar). viewOptions controla anexos (NF/Boleto).
-      const viewOptions: any = body.viewOptions || {};
+      // 4. POST do envio. CA exige subject/content/replyTo. Tenta vários
+      //    nomes simultaneamente (raiz e viewOptions) — campos extras são
+      //    ignorados pela CA, mas se algum casar passa.
+      const viewOptions: any = {
+        ...(body.viewOptions || {}),
+        subject,
+        title: subject,
+        content,
+        body: content,
+        message: content,
+        emailSubject: subject,
+        emailContent: content,
+        emailBody: content,
+        replyTo: senderEmail,
+        replyToEmail: senderEmail,
+        senderEmail,
+        senderName,
+      };
       const payload = {
         customerMail: todos.join(","),
         notificationReference: vendaId,
         registryId: customerId,
         senderEmail,
         senderName,
-        title: subject,
+        replyTo: senderEmail,
         subject,
+        title: subject,
         content,
         message: content,
-        replyTo: senderEmail,
         viewOptions,
       };
       const r = await caBffSession(
