@@ -336,6 +336,12 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
             toast.warning(`E-mail não enviado pra ${l.nome}: ${msg}`);
           } else {
             console.log(`[Faturar] Email enviado pra ${l.nome}:`, jEmail);
+            const urlsRemovidas = jEmail?.urls_removidas as string[] | undefined;
+            if (urlsRemovidas && urlsRemovidas.length > 0) {
+              toast.info(
+                `${l.nome}: e-mail enviado, mas a CA bloqueia URLs. Responda a cópia que chegou pro Medwork com o link.`
+              );
+            }
           }
         } catch (e: any) {
           console.error(`[Faturar] Erro de rede no email pra ${l.nome}:`, e);
