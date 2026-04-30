@@ -30,7 +30,7 @@ function getTransporter() {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  Object.entries(corsHeaders(req)).forEach(([k, v]) => res.setHeader(k, v));
+  Object.entries(corsHeaders).forEach(([k, v]) => res.setHeader(k, v));
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
