@@ -8,6 +8,7 @@ import {
   caApi,
   caBff,
   FRONT_URL,
+  forceRefresh,
 } from "./_ca.js";
 import {
   caBffSession,
@@ -121,6 +122,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const sb = supaAdmin();
       await sb.from("contaazul_tokens").delete().eq("id", 1);
       return res.status(200).json({ ok: true });
+    }
+
+    if (action === "oauth-refresh") {
+      // Cron diário (3h UTC) e endpoint manual: força refresh do OAuth2
+      // pra manter o refresh_token vivo (cada uso renova a janela CA de 30d)
+      const result = await forceRefresh();
+      return res.status(result.ok ? 200 : 500).json(result);
     }
 
     if (action === "cost-centers") {

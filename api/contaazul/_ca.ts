@@ -93,14 +93,80 @@ export async function refreshAccessToken(refresh: string) {
   return j.access_token as string;
 }
 
+// Lock distribuído via Supabase pra evitar refresh paralelo.
+// A CA (AWS Cognito) tem reuse detection — se duas requests chamam refresh
+// com o mesmo refresh_token, ela revoga TUDO. Esse lock garante que só
+// uma instância renova de cada vez; as outras esperam e releem.
+async function tryAcquireRefreshLock(): Promise<boolean> {
+  const sb = supaAdmin();
+  const cutoff = new Date(Date.now() - 15000).toISOString();
+  const { data } = await sb
+    .from("contaazul_tokens")
+    .update({ refreshing_at: new Date().toISOString() })
+    .eq("id", 1)
+    .or(`refreshing_at.is.null,refreshing_at.lt.${cutoff}`)
+    .select("id")
+    .maybeSingle();
+  return !!data;
+}
+
+async function releaseRefreshLock() {
+  const sb = supaAdmin();
+  await sb
+    .from("contaazul_tokens")
+    .update({ refreshing_at: null })
+    .eq("id", 1);
+}
+
 export async function getValidAccessToken(): Promise<string> {
-  const t = await loadTokens();
+  let t = await loadTokens();
   if (!t) throw new Error("Conta Azul não conectado. Use /api/contaazul/authorize.");
   const exp = new Date(t.expires_at).getTime();
-  if (exp <= Date.now() + 60000) {
-    return await refreshAccessToken(t.refresh_token);
+  if (exp > Date.now() + 60000) return t.access_token;
+
+  // Token expirou ou está pra expirar — tenta pegar lock pra renovar
+  const got = await tryAcquireRefreshLock();
+  if (!got) {
+    // Outra instância está renovando — aguarda 2s e relê
+    await new Promise((r) => setTimeout(r, 2000));
+    t = await loadTokens();
+    if (t && new Date(t.expires_at).getTime() > Date.now() + 30000) {
+      return t.access_token;
+    }
+    // Espera mais 2s
+    await new Promise((r) => setTimeout(r, 2000));
+    t = await loadTokens();
+    if (t && new Date(t.expires_at).getTime() > Date.now() + 30000) {
+      return t.access_token;
+    }
+    throw new Error("Refresh em conflito — tente novamente em alguns segundos");
   }
-  return t.access_token;
+
+  try {
+    // Re-lê o token DENTRO do lock — pode ter sido renovado entre o load
+    // inicial e o acquire (corrida benigna)
+    const fresh = await loadTokens();
+    if (fresh && new Date(fresh.expires_at).getTime() > Date.now() + 30000) {
+      return fresh.access_token;
+    }
+    return await refreshAccessToken(fresh?.refresh_token || t.refresh_token);
+  } finally {
+    await releaseRefreshLock();
+  }
+}
+
+// Força um refresh — usado pelo cron diário pra manter o refresh_token
+// "vivo" (cada uso renova a janela de 30 dias da CA).
+export async function forceRefresh(): Promise<{ ok: boolean; expires_at?: string; error?: string }> {
+  const t = await loadTokens();
+  if (!t) return { ok: false, error: "no token" };
+  try {
+    await refreshAccessToken(t.refresh_token);
+    const t2 = await loadTokens();
+    return { ok: true, expires_at: t2?.expires_at };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || "refresh failed" };
+  }
 }
 
 export async function caApi(method: string, endpoint: string, body?: any) {
