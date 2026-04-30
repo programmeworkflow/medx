@@ -87,6 +87,11 @@ export default function Importacao() {
       // planilhas armazenam moeda em centavos e mostram formatado — sem
       // isso, "80,00" exibido virava 8000 ao ler.
       const rows: any[] = XLSX.utils.sheet_to_json(ws, { raw: false });
+      console.log("[Importação] Sheets disponíveis:", wb.SheetNames);
+      console.log("[Importação] Sheet usada:", sheetName);
+      console.log("[Importação] Linhas lidas:", rows.length);
+      console.log("[Importação] Headers da 1ª linha:", rows[0] ? Object.keys(rows[0]) : "(nenhuma)");
+      console.log("[Importação] 1ª linha (preview):", rows[0]);
 
       const empresas = await fetchEmpresas();
       const empresasByCnpj = new Map(empresas.map((e) => [normalizeCnpj(e.cnpj), e]));
@@ -160,10 +165,16 @@ export default function Importacao() {
         if (isNaN(valor)) valor = 0;
         const linkEso = row["Link"] || row["link"] || null;
 
-        if (!rawCnpj || !nomeEmpresa) continue;
+        if (!rawCnpj || !nomeEmpresa) {
+          console.warn("[Importação] Linha pulada — sem CNPJ ou nome:", { rawCnpj, nomeEmpresa, row });
+          continue;
+        }
 
         const cnpjNorm = normalizeCnpj(rawCnpj);
-        if (cnpjNorm.length < 11) continue; // skip invalid
+        if (cnpjNorm.length < 11) {
+          console.warn("[Importação] Linha pulada — CNPJ inválido após normalização:", { rawCnpj, cnpjNorm, nomeEmpresa });
+          continue;
+        }
 
         total++;
         const empresa = empresasByCnpj.get(cnpjNorm);
