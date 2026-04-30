@@ -193,21 +193,52 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const cc: string[] = Array.isArray(body.cc) ? body.cc.filter(Boolean) : [];
       const todos = [...new Set([...emails, ...cc])];
 
-      // 3. Mensagem extra (link da fatura ESO etc): injeta em viewOptions
-      const viewOptions: any = body.viewOptions || {};
+      // 3. Monta subject + content (CA exige; senão retorna 400)
+      const numero = info.data?.number ?? info.data?.numero ?? "";
+      const ownerName = info.data?.owner?.name?.trim() || "Medwork";
+      const clienteNome =
+        info.data?.negotiator?.name ||
+        info.data?.negotiator?.companyName ||
+        "Cliente";
+      const valorNet =
+        info.data?.valueComposition?.netValue ??
+        info.data?.financialEvent?.paymentCondition?.installments?.[0]?.valueComposition?.netValue ??
+        info.data?.value ??
+        0;
+      const valorFmt = Number(valorNet).toLocaleString("pt-BR", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      const subject =
+        body.subject ||
+        `[Importante] A fatura Nº ${numero} de ${ownerName} está disponível`;
+      let content =
+        body.content ||
+        `Olá ${clienteNome},\nA Fatura Nº ${numero} no valor de R$ ${valorFmt} está disponível.`;
       if (body.mensagem_extra) {
-        viewOptions.message = body.mensagem_extra;
-        viewOptions.customMessage = body.mensagem_extra;
-        viewOptions.additionalMessage = body.mensagem_extra;
+        content += `\n\n${body.mensagem_extra}`;
       }
+      const senderEmail =
+        body.senderEmail ||
+        process.env.CONTA_AZUL_SENDER_EMAIL ||
+        "medwork.financeiro@gmail.com";
+      const senderName = body.senderName || ownerName;
 
-      // 4. POST do envio
+      // 4. POST do envio — title/content/senderEmail no nível raiz
+      // (CA reclama "Conteúdo do email, Assunto do email, Email pra retorno"
+      // se faltar). viewOptions controla anexos (NF/Boleto).
+      const viewOptions: any = body.viewOptions || {};
       const payload = {
         customerMail: todos.join(","),
         notificationReference: vendaId,
         registryId: customerId,
-        senderEmail: body.senderEmail || "",
-        senderName: body.senderName || "",
+        senderEmail,
+        senderName,
+        title: subject,
+        subject,
+        content,
+        message: content,
+        replyTo: senderEmail,
         viewOptions,
       };
       const r = await caBffSession(
