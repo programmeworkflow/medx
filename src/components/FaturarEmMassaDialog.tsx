@@ -27,9 +27,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AlertTriangle, CheckCircle2, ExternalLink, Wallet, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ExternalLink, Mail, Wallet, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { formatCnpjCpf } from "@/lib/format";
+import EnviarEmailDialog from "./EnviarEmailDialog";
 import {
   fetchFaturamentos,
   fetchEmpresas,
@@ -112,6 +113,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
   );
   const [linhas, setLinhas] = useState<Linha[]>([]);
   const [resultados, setResultados] = useState<Record<string, Resultado>>({});
+  const [emailDialog, setEmailDialog] = useState<{ vendaId: string; numero?: number } | null>(null);
 
   const servicosQ = useQuery({
     queryKey: ["ca-servicos"],
@@ -499,7 +501,12 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
                     />
                   </TableCell>
                   <TableCell>
-                    <ResultadoCelula resultado={resultados[l.faturamentoId]} />
+                    <ResultadoCelula
+                      resultado={resultados[l.faturamentoId]}
+                      onEnviarEmail={(vendaId, numero) =>
+                        setEmailDialog({ vendaId, numero })
+                      }
+                    />
                   </TableCell>
                 </TableRow>
               ))}
@@ -533,11 +540,23 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
           </div>
         </div>
       </DialogContent>
+      <EnviarEmailDialog
+        vendaId={emailDialog?.vendaId ?? null}
+        vendaNumero={emailDialog?.numero}
+        open={!!emailDialog}
+        onOpenChange={(v) => !v && setEmailDialog(null)}
+      />
     </Dialog>
   );
 }
 
-function ResultadoCelula({ resultado }: { resultado?: Resultado }) {
+function ResultadoCelula({
+  resultado,
+  onEnviarEmail,
+}: {
+  resultado?: Resultado;
+  onEnviarEmail?: (vendaId: string, numero?: number) => void;
+}) {
   if (!resultado) {
     return <span className="text-xs text-muted-foreground">—</span>;
   }
@@ -590,6 +609,16 @@ function ResultadoCelula({ resultado }: { resultado?: Resultado }) {
             >
               <ExternalLink className="h-3 w-3" />
             </a>
+          )}
+          {resultado.vendaId && onEnviarEmail && (
+            <button
+              type="button"
+              onClick={() => onEnviarEmail(resultado.vendaId!, resultado.vendaNumero)}
+              title="Enviar e-mail ao cliente"
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <Mail className="h-3 w-3" />
+            </button>
           )}
         </div>
         {labelNF && <div className="text-muted-foreground">{labelNF}</div>}

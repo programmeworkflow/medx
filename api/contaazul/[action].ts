@@ -130,6 +130,98 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ok: true });
     }
 
+    if (action === "send-email-venda") {
+      // Replica o "Enviar e-mail" da UI da CA. Body:
+      //   { vendaId, emails?: string[], senderEmail?, senderName?, viewOptions? }
+      // Se emails não vier, busca defaults do billingContact da venda.
+      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+      const body: any = req.body || {};
+      const vendaId = body.vendaId as string;
+      if (!vendaId) return res.status(400).json({ error: "vendaId obrigatório" });
+
+      // 1. Busca info da venda pra pegar customerId (registryId)
+      const info = await caBffSession(
+        "GET",
+        `https://services.contaazul.com/contaazul-bff/sale/v1/sales/${vendaId}`
+      );
+      if (!info.ok) {
+        return res.status(500).json({ error: `lookup venda falhou: ${info.status}` });
+      }
+      const customerId =
+        info.data?.customer?.id ||
+        info.data?.customerId ||
+        info.data?.financialEvent?.paymentCondition?.installments?.[0]?.chargeRequests?.[0]?.customerId;
+      if (!customerId) {
+        return res.status(500).json({ error: "customerId não encontrado na venda" });
+      }
+
+      // 2. Resolve emails: se body.emails veio, usa. Senão pede ao billing-contact.
+      let emails: string[] = Array.isArray(body.emails) ? body.emails.filter(Boolean) : [];
+      if (emails.length === 0) {
+        const bc = await caBffSession(
+          "GET",
+          `https://services.contaazul.com/billing/contact?customerId=${customerId}`
+        );
+        if (bc.ok) {
+          const bcEmails = bc.data?.billingContact?.emails || bc.data?.emails || [];
+          emails = bcEmails.filter(Boolean);
+        }
+      }
+      if (emails.length === 0) {
+        return res.status(400).json({ error: "Sem emails de destinatário" });
+      }
+
+      // 3. POST do envio
+      const payload = {
+        customerMail: emails.join(","),
+        notificationReference: vendaId,
+        registryId: customerId,
+        senderEmail: body.senderEmail || "",
+        senderName: body.senderName || "",
+        viewOptions: body.viewOptions || {},
+      };
+      const r = await caBffSession(
+        "POST",
+        `https://services.contaazul.com/billing-notifier/invoice/send-to/${vendaId}`,
+        payload
+      );
+      if (!r.ok) {
+        return res.status(r.status >= 400 ? r.status : 500).json({
+          ok: false,
+          error: `envio falhou: ${r.status} ${r.text?.slice(0, 200)}`,
+        });
+      }
+      return res.status(200).json({ ok: true, emails, response: r.data });
+    }
+
+    if (action === "billing-contact-venda") {
+      // GET ?vendaId=... → retorna { emails: [...], customerName: "..." }
+      const vendaId = (req.query.vendaId as string) || "";
+      if (!vendaId) return res.status(400).json({ error: "vendaId obrigatório" });
+      const info = await caBffSession(
+        "GET",
+        `https://services.contaazul.com/contaazul-bff/sale/v1/sales/${vendaId}`
+      );
+      if (!info.ok) return res.status(500).json({ error: "lookup venda falhou" });
+      const customerId =
+        info.data?.customer?.id ||
+        info.data?.customerId ||
+        info.data?.financialEvent?.paymentCondition?.installments?.[0]?.chargeRequests?.[0]?.customerId;
+      const customerName =
+        info.data?.customer?.name || info.data?.customerName || "";
+      let emails: string[] = [];
+      if (customerId) {
+        const bc = await caBffSession(
+          "GET",
+          `https://services.contaazul.com/billing/contact?customerId=${customerId}`
+        );
+        if (bc.ok) {
+          emails = (bc.data?.billingContact?.emails || bc.data?.emails || []).filter(Boolean);
+        }
+      }
+      return res.status(200).json({ emails, customerName, customerId });
+    }
+
     if (action === "oauth-refresh") {
       // Cron diário (3h UTC) e endpoint manual: força refresh do OAuth2
       // pra manter o refresh_token vivo (cada uso renova a janela CA de 30d)
