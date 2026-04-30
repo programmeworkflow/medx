@@ -132,8 +132,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (action === "send-email-venda") {
       // Replica o "Enviar e-mail" da UI da CA. Body:
-      //   { vendaId, emails?: string[], senderEmail?, senderName?, viewOptions? }
+      //   { vendaId, emails?, cc?, mensagem_extra?, senderEmail?, senderName?, viewOptions? }
       // Se emails não vier, busca defaults do billingContact da venda.
+      // cc vai concatenado em customerMail (CA não tem campo cc separado no payload BFF;
+      // ambos vão como destinatários).
+      // mensagem_extra é injetado em viewOptions.message ou customMessage.
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
       const body: any = req.body || {};
       const vendaId = body.vendaId as string;
@@ -170,15 +173,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (emails.length === 0) {
         return res.status(400).json({ error: "Sem emails de destinatário" });
       }
+      const cc: string[] = Array.isArray(body.cc) ? body.cc.filter(Boolean) : [];
+      const todos = [...new Set([...emails, ...cc])];
 
-      // 3. POST do envio
+      // 3. Mensagem extra (link da fatura ESO etc): injeta em viewOptions
+      const viewOptions: any = body.viewOptions || {};
+      if (body.mensagem_extra) {
+        viewOptions.message = body.mensagem_extra;
+        viewOptions.customMessage = body.mensagem_extra;
+        viewOptions.additionalMessage = body.mensagem_extra;
+      }
+
+      // 4. POST do envio
       const payload = {
-        customerMail: emails.join(","),
+        customerMail: todos.join(","),
         notificationReference: vendaId,
         registryId: customerId,
         senderEmail: body.senderEmail || "",
         senderName: body.senderName || "",
-        viewOptions: body.viewOptions || {},
+        viewOptions,
       };
       const r = await caBffSession(
         "POST",
@@ -191,7 +204,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           error: `envio falhou: ${r.status} ${r.text?.slice(0, 200)}`,
         });
       }
-      return res.status(200).json({ ok: true, emails, response: r.data });
+      return res.status(200).json({ ok: true, emails: todos, response: r.data });
     }
 
     if (action === "billing-contact-venda") {

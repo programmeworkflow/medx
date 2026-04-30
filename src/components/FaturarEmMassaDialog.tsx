@@ -66,7 +66,7 @@ interface Linha {
   valor: number;
   semCadastro: boolean;
   nfModo: NfModo;
-  enviarEmailPadrao: boolean;
+  linkEso: string | null;
   // editáveis
   selected: boolean;
   centroCustoId: string;
@@ -74,6 +74,7 @@ interface Linha {
   retencao: RetencaoPadrao;
   emitirNF: boolean;
   emitirBoleto: boolean;
+  enviarEmail: boolean;
 }
 
 export default function FaturarEmMassaDialog({ centros: _centros }: { centros: CentroCusto[] }) {
@@ -117,8 +118,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
   const [linhas, setLinhas] = useState<Linha[]>([]);
   const [resultados, setResultados] = useState<Record<string, Resultado>>({});
   const [emailDialog, setEmailDialog] = useState<{ vendaId: string; numero?: number } | null>(null);
-  // "auto" usa flag enviar_email_padrao por empresa; "todos" força em todos; "nenhum" desativa
-  const [emailModo, setEmailModo] = useState<"auto" | "todos" | "nenhum">("auto");
+  const [ccPadrao, setCcPadrao] = useState<string>("medwork.financeiro@gmail.com");
 
   const servicosQ = useQuery({
     queryKey: ["ca-servicos"],
@@ -189,13 +189,14 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
           valor: Number(f.valor) || 0,
           semCadastro,
           nfModo,
-          enviarEmailPadrao: !!empresa?.enviar_email_padrao,
+          linkEso: f.link_relatorio_eso ?? null,
           selected: !semCadastro,
           centroCustoId: empresa?.centro_custo_id || "",
           dataVencimento: dataVencPadrao,
           retencao: retPadrao,
           emitirNF: nfModo === "automatica",
           emitirBoleto: false,
+          enviarEmail: !!empresa?.enviar_email_padrao,
         };
       });
     setLinhas(novas);
@@ -309,18 +310,24 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
       } catch (e) {
         console.error("Falha ao atualizar status do faturamento:", e);
       }
-      // Auto-envio de e-mail: dispara se OK e (modo=todos OU modo=auto+empresa marcou)
-      if (
-        res.ok &&
-        res.vendaId &&
-        emailModo !== "nenhum" &&
-        (emailModo === "todos" || (emailModo === "auto" && l.enviarEmailPadrao))
-      ) {
+      // Auto-envio de e-mail: dispara se a linha está marcada e venda OK
+      if (res.ok && res.vendaId && l.enviarEmail) {
         try {
+          const cc = ccPadrao
+            .split(/[,;\s]+/)
+            .map((s) => s.trim())
+            .filter((s) => s.includes("@"));
+          const mensagem_extra = l.linkEso
+            ? `Segue o link para acessar a fatura:\n${l.linkEso}`
+            : undefined;
           await fetch("/api/contaazul/send-email-venda", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ vendaId: res.vendaId }),
+            body: JSON.stringify({
+              vendaId: res.vendaId,
+              cc,
+              mensagem_extra,
+            }),
           });
         } catch (e) {
           console.error(`Falha ao enviar email pra ${l.nome}:`, e);
@@ -448,15 +455,14 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
             </div>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Enviar e-mail após faturar</Label>
-            <Select value={emailModo} onValueChange={(v) => setEmailModo(v as any)}>
-              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="auto">Conforme cadastro da empresa</SelectItem>
-                <SelectItem value="todos">Sim, em todos</SelectItem>
-                <SelectItem value="nenhum">Não enviar</SelectItem>
-              </SelectContent>
-            </Select>
+            <Label className="text-xs">E-mail em cópia (CC)</Label>
+            <Input
+              type="text"
+              className="h-9"
+              value={ccPadrao}
+              onChange={(e) => setCcPadrao(e.target.value)}
+              placeholder="email@exemplo.com"
+            />
           </div>
           <div className="space-y-1 flex flex-col justify-end">
             <Badge variant="secondary" className="self-start">
@@ -482,6 +488,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
                 <TableHead>Retenção</TableHead>
                 <TableHead className="text-center">NF</TableHead>
                 <TableHead className="text-center">Boleto</TableHead>
+                <TableHead className="text-center">E-mail</TableHead>
                 <TableHead className="min-w-[200px]">Resultado</TableHead>
               </TableRow>
             </TableHeader>
@@ -544,6 +551,14 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
                       disabled={l.semCadastro}
                     />
                   </TableCell>
+                  <TableCell className="text-center">
+                    <Checkbox
+                      checked={l.enviarEmail}
+                      onCheckedChange={(c) => updateLinha(l.faturamentoId, { enviarEmail: !!c })}
+                      disabled={l.semCadastro}
+                      title={l.linkEso ? `Inclui link ESO: ${l.linkEso}` : "Sem link ESO no faturamento"}
+                    />
+                  </TableCell>
                   <TableCell>
                     <ResultadoCelula
                       resultado={resultados[l.faturamentoId]}
@@ -556,7 +571,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
               ))}
               {linhas.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
                     Nenhum faturamento pendente para a competência atual.
                   </TableCell>
                 </TableRow>
