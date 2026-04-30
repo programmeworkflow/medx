@@ -95,13 +95,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (action === "callback") {
       const code = (req.query.code as string) || "";
       const error = (req.query.error as string) || "";
-      if (error) return res.redirect(302, `${FRONT_URL}/faturamento?ca_error=${encodeURIComponent(error)}`);
+      // Redireciona pro Vite SPA do mesmo host onde o callback rodou (rota
+      // /faturamento existe lá). Evita 404 quando FRONT_URL aponta pro
+      // medx-contratos (HTML monolítico com hash routing).
+      const host = req.headers.host || "medx-flow-mocha.vercel.app";
+      const proto = (req.headers["x-forwarded-proto"] as string) || "https";
+      const baseReturn = `${proto}://${host}/faturamento`;
+      if (error) return res.redirect(302, `${baseReturn}?ca_error=${encodeURIComponent(error)}`);
       if (!code) return res.status(400).send("Faltou parâmetro code");
       try {
         await exchangeCode(code);
-        return res.redirect(302, `${FRONT_URL}/faturamento?ca_connected=1`);
+        return res.redirect(302, `${baseReturn}?ca_connected=1`);
       } catch (err: any) {
-        return res.redirect(302, `${FRONT_URL}/faturamento?ca_error=${encodeURIComponent(err?.message || "callback failed")}`);
+        return res.redirect(302, `${baseReturn}?ca_error=${encodeURIComponent(err?.message || "callback failed")}`);
       }
     }
 
