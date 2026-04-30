@@ -315,6 +315,7 @@ export type Database = {
         | "pago_avista"
         | "concluido"
         | "sem_cadastro"
+        | "ca_error"
       tipo_faturamento: "propria_empresa" | "outra_empresa"
     }
     CompositeTypes: {
@@ -461,6 +462,7 @@ export const Constants = {
         "pago_avista",
         "concluido",
         "sem_cadastro",
+        "ca_error",
       ],
       tipo_faturamento: ["propria_empresa", "outra_empresa"],
     },

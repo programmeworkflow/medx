@@ -42,6 +42,7 @@ export const STATUS_LABELS: Record<StatusFaturamento, string> = {
   pago_avista: "Pago à Vista",
   concluido: "Concluído",
   sem_cadastro: "Não possui cadastro",
+  ca_error: "Erro CA",
 };
 
 export const STATUS_COLORS: Record<StatusFaturamento, string> = {
@@ -52,6 +53,7 @@ export const STATUS_COLORS: Record<StatusFaturamento, string> = {
   pago_avista: "bg-success/20 text-success",
   concluido: "bg-success text-white",
   sem_cadastro: "bg-destructive/20 text-destructive",
+  ca_error: "bg-destructive text-white",
 };
 
 export const MESES = [

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
   DialogContent,
@@ -36,6 +36,7 @@ import {
   fetchEmpresas,
   fetchCompetencias,
   calcularRetencao,
+  updateFaturamentoStatus,
   MESES,
   type RetencaoPadrao,
 } from "@/lib/api";
@@ -75,6 +76,7 @@ interface Linha {
 }
 
 export default function FaturarEmMassaDialog({ centros: _centros }: { centros: CentroCusto[] }) {
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
@@ -294,13 +296,24 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
         };
       }
       setResultados((prev) => ({ ...prev, [l.faturamentoId]: res }));
+      // Persiste status no banco — sucesso vira "concluido", falha vira "ca_error".
+      // Não bloqueia o fluxo se a atualização falhar.
+      try {
+        await updateFaturamentoStatus(
+          l.faturamentoId,
+          res.ok ? "concluido" : "ca_error"
+        );
+      } catch (e) {
+        console.error("Falha ao atualizar status do faturamento:", e);
+      }
       if (res.ok) ok++;
       else fail++;
       setProgress({ done: i + 1, total: selecionadas.length });
     }
     setProgress(null);
-    // Atualiza status local dos faturamentos que deram OK pra "concluido"
-    // (atualização persistente fica a cargo da página Faturamento via reload).
+    // Refresca a página Faturamento (status atualizado em cada linha)
+    queryClient.invalidateQueries({ queryKey: ["faturamentos"] });
+    queryClient.invalidateQueries({ queryKey: ["competencias"] });
     if (fail === 0) {
       toast.success(`Todos os ${ok} faturamento(s) criados com sucesso!`);
     } else {
