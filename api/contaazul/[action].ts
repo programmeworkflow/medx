@@ -235,6 +235,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ emails, customerName, customerId });
     }
 
+    if (action === "debug-vendas-recentes") {
+      const sb = supaAdmin();
+      const { data } = await sb
+        .from("contaazul_vendas")
+        .select("ca_venda_id,cnpj,raw,nf_status,boleto_status,created_at")
+        .order("created_at", { ascending: false })
+        .limit(5);
+      const itens = (data || []).map((v: any) => ({
+        ca_venda_id: v.ca_venda_id,
+        numero: v.raw?.venda?.numero,
+        cnpj: v.cnpj,
+        nf_status: v.nf_status,
+        boleto_status: v.boleto_status,
+        created_at: v.created_at,
+      }));
+      return res.status(200).json({ itens });
+    }
+
     if (action === "debug-faturamentos") {
       // Debug temporário: lista faturamentos por competência (mes/ano).
       // Usa service role, ignora RLS. Remover após debug.
