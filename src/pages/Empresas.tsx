@@ -321,7 +321,7 @@ export default function Empresas() {
             <DialogTrigger asChild>
               <Button variant="outline"><Upload className="h-4 w-4 mr-2" /> Importar Planilha</Button>
             </DialogTrigger>
-            <DialogContent className="max-w-lg">
+            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle className="font-display">Importar Empresas por Planilha</DialogTitle>
               </DialogHeader>
@@ -363,7 +363,7 @@ export default function Empresas() {
             <DialogTrigger asChild>
               <Button><Plus className="h-4 w-4 mr-2" /> Nova Empresa</Button>
             </DialogTrigger>
-            <DialogContent className="max-w-lg">
+            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle className="font-display">{editingId ? "Editar Empresa" : "Cadastrar Empresa"}</DialogTitle>
               </DialogHeader>
@@ -673,7 +673,7 @@ export default function Empresas() {
 
       {/* Detail Dialog */}
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">Detalhes da Empresa</DialogTitle>
           </DialogHeader>
