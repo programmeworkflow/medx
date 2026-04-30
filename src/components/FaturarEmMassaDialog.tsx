@@ -320,7 +320,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
           const mensagem_extra = l.linkEso
             ? `Segue o link para acessar a fatura:\n${l.linkEso}`
             : undefined;
-          await fetch("/api/contaazul/send-email-venda", {
+          const rEmail = await fetch("/api/contaazul/send-email-venda", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -329,8 +329,17 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
               mensagem_extra,
             }),
           });
-        } catch (e) {
-          console.error(`Falha ao enviar email pra ${l.nome}:`, e);
+          const jEmail = await rEmail.json().catch(() => ({}));
+          if (!rEmail.ok || jEmail?.ok === false) {
+            const msg = jEmail?.error || `HTTP ${rEmail.status}`;
+            console.error(`[Faturar] Falha email pra ${l.nome}:`, msg, jEmail);
+            toast.warning(`E-mail não enviado pra ${l.nome}: ${msg}`);
+          } else {
+            console.log(`[Faturar] Email enviado pra ${l.nome}:`, jEmail);
+          }
+        } catch (e: any) {
+          console.error(`[Faturar] Erro de rede no email pra ${l.nome}:`, e);
+          toast.warning(`E-mail não enviado pra ${l.nome}: ${e?.message || "erro de rede"}`);
         }
       }
       if (res.ok) ok++;
