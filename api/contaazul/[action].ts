@@ -162,8 +162,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json({ error: "customerId/negotiatorId não encontrado na venda" });
       }
 
-      // 2. Resolve emails: se body.emails veio, usa. Senão pede ao billing-contact.
+      // 2. Resolve emails: se body.emails veio, usa. Senão pega do
+      //    negotiator.billingContact direto na venda (já vem no GET de cima).
+      //    Fallback: chama /billing/contact se ainda não tiver.
       let emails: string[] = Array.isArray(body.emails) ? body.emails.filter(Boolean) : [];
+      if (emails.length === 0) {
+        const bcInline =
+          info.data?.negotiator?.billingContact?.emails ||
+          info.data?.negotiator?.emails ||
+          [];
+        emails = (bcInline as string[]).filter(Boolean);
+      }
       if (emails.length === 0) {
         const bc = await caBffSession(
           "GET",
@@ -174,8 +183,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           emails = bcEmails.filter(Boolean);
         }
       }
+      // Se ainda não tem, usa o email do próprio negotiator
+      if (emails.length === 0 && info.data?.negotiator?.email) {
+        emails = [info.data.negotiator.email];
+      }
       if (emails.length === 0) {
-        return res.status(400).json({ error: "Sem emails de destinatário" });
+        return res.status(400).json({ error: "Sem emails de destinatário (billingContact vazio)" });
       }
       const cc: string[] = Array.isArray(body.cc) ? body.cc.filter(Boolean) : [];
       const todos = [...new Set([...emails, ...cc])];
@@ -221,13 +234,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       );
       if (!info.ok) return res.status(500).json({ error: "lookup venda falhou" });
       const customerId =
+        info.data?.negotiatorId ||
+        info.data?.negotiator?.uuid ||
         info.data?.customer?.id ||
-        info.data?.customerId ||
-        info.data?.financialEvent?.paymentCondition?.installments?.[0]?.chargeRequests?.[0]?.customerId;
+        info.data?.customerId;
       const customerName =
-        info.data?.customer?.name || info.data?.customerName || "";
-      let emails: string[] = [];
-      if (customerId) {
+        info.data?.negotiator?.name ||
+        info.data?.negotiator?.companyName ||
+        info.data?.customer?.name ||
+        info.data?.customerName ||
+        "";
+      let emails: string[] = (
+        info.data?.negotiator?.billingContact?.emails ||
+        info.data?.negotiator?.emails ||
+        []
+      ).filter(Boolean);
+      if (emails.length === 0 && customerId) {
         const bc = await caBffSession(
           "GET",
           `https://services.contaazul.com/billing/contact?customerId=${customerId}`
@@ -235,6 +257,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (bc.ok) {
           emails = (bc.data?.billingContact?.emails || bc.data?.emails || []).filter(Boolean);
         }
+      }
+      if (emails.length === 0 && info.data?.negotiator?.email) {
+        emails = [info.data.negotiator.email];
       }
       return res.status(200).json({ emails, customerName, customerId });
     }
