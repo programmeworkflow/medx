@@ -222,6 +222,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ emails, customerName, customerId });
     }
 
+    if (action === "debug-faturamentos") {
+      // Debug temporário: lista faturamentos por competência (mes/ano).
+      // Usa service role, ignora RLS. Remover após debug.
+      const mes = Number((req.query.mes as string) || "0");
+      const ano = Number((req.query.ano as string) || "0");
+      if (!mes || !ano) return res.status(400).json({ error: "mes e ano obrigatórios" });
+      const sb = supaAdmin();
+      const { data: comps } = await sb
+        .from("competencias")
+        .select("id,mes,ano,status,criado_em")
+        .eq("mes", mes)
+        .eq("ano", ano);
+      const compIds = (comps || []).map((c: any) => c.id);
+      let fats: any[] = [];
+      if (compIds.length > 0) {
+        const r = await sb
+          .from("faturamentos")
+          .select("id,competencia_id,status,valor,categoria_snapshot,empresa_executora_id,criado_em")
+          .in("competencia_id", compIds)
+          .order("criado_em", { ascending: false })
+          .limit(20);
+        fats = r.data || [];
+      }
+      const { count: totalFats } = compIds.length
+        ? await sb
+            .from("faturamentos")
+            .select("id", { count: "exact", head: true })
+            .in("competencia_id", compIds)
+        : { count: 0 };
+      return res.status(200).json({
+        competencias: comps || [],
+        total_faturamentos_na_competencia: totalFats,
+        amostra: fats,
+      });
+    }
+
     if (action === "oauth-refresh") {
       // Cron diário (3h UTC) e endpoint manual: força refresh do OAuth2
       // pra manter o refresh_token vivo (cada uso renova a janela CA de 30d)
