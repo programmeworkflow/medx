@@ -82,11 +82,10 @@ export default function Importacao() {
         n.toLowerCase().includes("aso") && n.toLowerCase().includes("valor")
       ) || wb.SheetNames.find((n) => n.toLowerCase().includes("aso")) || wb.SheetNames[0];
       const ws = wb.Sheets[sheetName];
-      // raw:false faz o XLSX retornar o TEXTO formatado da célula
-      // (ex: "80,00") em vez do número bruto. Necessário porque algumas
-      // planilhas armazenam moeda em centavos e mostram formatado — sem
-      // isso, "80,00" exibido virava 8000 ao ler.
-      const rows: any[] = XLSX.utils.sheet_to_json(ws, { raw: false });
+      // raw:true (default) — preserva números como números (essencial pro CNPJ
+      // que de outra forma vira notação científica "3.65383E+13"). Pra centavos
+      // a heurística abaixo (todos inteiros + ≥100) detecta e divide por 100.
+      const rows: any[] = XLSX.utils.sheet_to_json(ws);
       console.log("[Importação] Sheets disponíveis:", wb.SheetNames);
       console.log("[Importação] Sheet usada:", sheetName);
       console.log("[Importação] Linhas lidas:", rows.length);
