@@ -355,11 +355,26 @@ export default function ContaAzulPanel() {
           )}
         </div>
 
-        {status?.connected && status.expires_in_seconds != null && (
+        {status?.connected && status.expires_in_seconds != null && status.expires_in_seconds > 0 && (
           <p className="text-xs text-muted-foreground">
             Token OAuth2 válido por mais {Math.max(0, Math.floor(status.expires_in_seconds / 60))} minutos
             (renovação automática quando expirar)
           </p>
+        )}
+        {status?.connected && status.expires_in_seconds != null && status.expires_in_seconds <= 0 && (
+          <div className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm flex items-start gap-3">
+            <AlertCircle className="h-4 w-4 mt-0.5 text-warning shrink-0" />
+            <div className="flex-1">
+              <p className="font-medium">Sessão da Conta Azul expirou</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                O refresh token OAuth2 não pode ser renovado automático (expira após ~30 dias ou se a CA revoga).
+                Clique em <b>Conectar Conta Azul</b> pra autorizar de novo.
+              </p>
+            </div>
+            <Button size="sm" onClick={handleConnect}>
+              <ExternalLink className="h-4 w-4 mr-1.5" /> Reconectar
+            </Button>
+          </div>
         )}
 
         {/* Sessão Cognito (BFF) — usada pra emitir NF e boleto */}
