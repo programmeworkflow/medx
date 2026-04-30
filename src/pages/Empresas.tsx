@@ -70,6 +70,7 @@ export default function Empresas() {
   const [janelaFechamento, setJanelaFechamento] = useState("");
   const [retencaoPadrao, setRetencaoPadrao] = useState<string>("nenhuma");
   const [nfModo, setNfModo] = useState<"nao_emite" | "manual" | "automatica">("manual");
+  const [enviarEmailPadrao, setEnviarEmailPadrao] = useState<boolean>(false);
   const [centroCustoId, setCentroCustoId] = useState<string>("");
 
   const { data: centrosCusto = [] } = useQuery({
@@ -123,7 +124,7 @@ export default function Empresas() {
   const resetForm = () => {
     setNome(""); setCnpj(""); setObs(""); setCategoria("medwork"); setTipo("propria_empresa"); setFatId(""); setAtiva(true);
     setVidasContrato(""); setVidasEso(""); setDataFechamentoEspecial(""); setJanelaFechamento("");
-    setRetencaoPadrao("nenhuma"); setNfModo("manual");
+    setRetencaoPadrao("nenhuma"); setNfModo("manual"); setEnviarEmailPadrao(false);
     setCentroCustoId("");
   };
 
@@ -150,6 +151,7 @@ export default function Empresas() {
         ? "automatica"
         : "manual"
     );
+    setEnviarEmailPadrao(!!(e as any).enviar_email_padrao);
     setCentroCustoId((e as any).centro_custo_id || "");
     setOpen(true);
   };
@@ -198,6 +200,7 @@ export default function Empresas() {
       retencao_padrao: retencaoPadrao,
       nf_modo: nfModo,
       emitir_nf_padrao: nfModo === "automatica",
+      enviar_email_padrao: enviarEmailPadrao,
       centro_custo_id: centroCustoId || null,
     };
 
@@ -523,6 +526,20 @@ export default function Empresas() {
                           {nfModo === "automatica" && " Default marcado, toda venda gera NF."}
                         </p>
                       </div>
+                      <label className="flex items-start gap-2 cursor-pointer p-3 rounded-lg border border-border">
+                        <input
+                          type="checkbox"
+                          checked={enviarEmailPadrao}
+                          onChange={(e) => setEnviarEmailPadrao(e.target.checked)}
+                          className="mt-0.5"
+                        />
+                        <div className="flex-1">
+                          <div className="text-sm font-medium">Enviar e-mail da venda automaticamente</div>
+                          <div className="text-xs text-muted-foreground">
+                            Após faturar, dispara o e-mail do Conta Azul pros contatos de cobrança da empresa.
+                          </div>
+                        </div>
+                      </label>
                     </AccordionContent>
                   </AccordionItem>
 

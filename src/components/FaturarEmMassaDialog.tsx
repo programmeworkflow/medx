@@ -66,6 +66,7 @@ interface Linha {
   valor: number;
   semCadastro: boolean;
   nfModo: NfModo;
+  enviarEmailPadrao: boolean;
   // editáveis
   selected: boolean;
   centroCustoId: string;
@@ -116,6 +117,8 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
   const [linhas, setLinhas] = useState<Linha[]>([]);
   const [resultados, setResultados] = useState<Record<string, Resultado>>({});
   const [emailDialog, setEmailDialog] = useState<{ vendaId: string; numero?: number } | null>(null);
+  // "auto" usa flag enviar_email_padrao por empresa; "todos" força em todos; "nenhum" desativa
+  const [emailModo, setEmailModo] = useState<"auto" | "todos" | "nenhum">("auto");
 
   const servicosQ = useQuery({
     queryKey: ["ca-servicos"],
@@ -186,6 +189,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
           valor: Number(f.valor) || 0,
           semCadastro,
           nfModo,
+          enviarEmailPadrao: !!empresa?.enviar_email_padrao,
           selected: !semCadastro,
           centroCustoId: empresa?.centro_custo_id || "",
           dataVencimento: dataVencPadrao,
@@ -297,7 +301,6 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
       }
       setResultados((prev) => ({ ...prev, [l.faturamentoId]: res }));
       // Persiste status no banco — sucesso vira "concluido", falha vira "ca_error".
-      // Não bloqueia o fluxo se a atualização falhar.
       try {
         await updateFaturamentoStatus(
           l.faturamentoId,
@@ -305,6 +308,23 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
         );
       } catch (e) {
         console.error("Falha ao atualizar status do faturamento:", e);
+      }
+      // Auto-envio de e-mail: dispara se OK e (modo=todos OU modo=auto+empresa marcou)
+      if (
+        res.ok &&
+        res.vendaId &&
+        emailModo !== "nenhum" &&
+        (emailModo === "todos" || (emailModo === "auto" && l.enviarEmailPadrao))
+      ) {
+        try {
+          await fetch("/api/contaazul/send-email-venda", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ vendaId: res.vendaId }),
+          });
+        } catch (e) {
+          console.error(`Falha ao enviar email pra ${l.nome}:`, e);
+        }
       }
       if (res.ok) ok++;
       else fail++;
@@ -426,6 +446,17 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
                 </SelectContent>
               </Select>
             </div>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Enviar e-mail após faturar</Label>
+            <Select value={emailModo} onValueChange={(v) => setEmailModo(v as any)}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Conforme cadastro da empresa</SelectItem>
+                <SelectItem value="todos">Sim, em todos</SelectItem>
+                <SelectItem value="nenhum">Não enviar</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1 flex flex-col justify-end">
             <Badge variant="secondary" className="self-start">
