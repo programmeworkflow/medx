@@ -33,6 +33,9 @@ export default function Importacao() {
     newCompanies: number;
     total: number;
     centavosCorrigidos?: number;
+    inserts_falhos?: number;
+    erros?: string[];
+    competenciaId?: string;
   } | null>(null);
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -125,6 +128,8 @@ export default function Importacao() {
       let newCompanies = 0;
       let total = 0;
       let centavosCorrigidos = 0;
+      let inserts_falhos = 0;
+      const erros: string[] = [];
 
       for (const row of rows) {
         // Map columns by header name (with fallbacks for different ESO formats)
@@ -165,7 +170,7 @@ export default function Importacao() {
 
         if (empresa) {
           // Has registration - create faturamento with empresa data
-          await supabase.from("faturamentos").insert({
+          const { error: insErr } = await supabase.from("faturamentos").insert({
             competencia_id: competenciaId,
             empresa_executora_id: empresa.id,
             empresa_faturadora_id: empresa.empresa_faturadora_id || empresa.id,
@@ -175,10 +180,16 @@ export default function Importacao() {
             observacoes_mes: empresa.observacoes || null,
             link_relatorio_eso: linkEso,
           });
-          found++;
+          if (insErr) {
+            inserts_falhos++;
+            erros.push(`${nomeEmpresa}: ${insErr.message}`);
+            console.error("[Importação] Falha insert faturamento:", insErr, { empresa: nomeEmpresa, cnpj: cnpjNorm });
+          } else {
+            found++;
+          }
         } else {
           // No registration - create a temporary empresa entry and mark as sem_cadastro
-          const { data: novaEmpresa } = await supabase
+          const { data: novaEmpresa, error: empErr } = await supabase
             .from("empresas")
             .insert({
               nome_empresa: nomeEmpresa,
@@ -190,9 +201,13 @@ export default function Importacao() {
             .select()
             .single();
 
-          if (novaEmpresa) {
+          if (empErr) {
+            inserts_falhos++;
+            erros.push(`${nomeEmpresa}: ${empErr.message}`);
+            console.error("[Importação] Falha insert empresa:", empErr, { nomeEmpresa, cnpj: cnpjNorm });
+          } else if (novaEmpresa) {
             empresasByCnpj.set(cnpjNorm, novaEmpresa);
-            await supabase.from("faturamentos").insert({
+            const { error: insErr } = await supabase.from("faturamentos").insert({
               competencia_id: competenciaId,
               empresa_executora_id: novaEmpresa.id,
               empresa_faturadora_id: novaEmpresa.id,
@@ -201,7 +216,13 @@ export default function Importacao() {
               valor: valor || null,
               link_relatorio_eso: linkEso,
             });
-            newCompanies++;
+            if (insErr) {
+              inserts_falhos++;
+              erros.push(`${nomeEmpresa}: ${insErr.message}`);
+              console.error("[Importação] Falha insert faturamento (sem cadastro):", insErr, { nomeEmpresa, cnpj: cnpjNorm });
+            } else {
+              newCompanies++;
+            }
           }
         }
       }
@@ -217,12 +238,16 @@ export default function Importacao() {
       queryClient.invalidateQueries({ queryKey: ["faturamentos"] });
       queryClient.invalidateQueries({ queryKey: ["empresas"] });
       queryClient.invalidateQueries({ queryKey: ["competencias"] });
-      setResult({ found, newCompanies, total, centavosCorrigidos });
+      setResult({ found, newCompanies, total, centavosCorrigidos, inserts_falhos, erros, competenciaId });
       const msgCentavos =
         centavosCorrigidos > 0
           ? ` · ${centavosCorrigidos} valor(es) ajustado(s) de centavos pra reais`
           : "";
-      toast.success(`${total} empresas processadas!${msgCentavos}`);
+      if (inserts_falhos > 0) {
+        toast.error(`${total} processadas, mas ${inserts_falhos} insert(s) falharam — ver detalhes no card abaixo`);
+      } else {
+        toast.success(`${total} empresas processadas!${msgCentavos}`);
+      }
     } catch (err: any) {
       toast.error("Erro ao processar: " + err.message);
     } finally {
@@ -346,6 +371,24 @@ export default function Importacao() {
                     <p className="text-xs text-muted-foreground mt-1">
                       💡 Detectei valores em centavos — {result.centavosCorrigidos} valor(es) ajustado(s) (÷100)
                     </p>
+                  ) : null}
+                  {result.inserts_falhos && result.inserts_falhos > 0 ? (
+                    <div className="mt-2 p-2 rounded bg-destructive/10 border border-destructive/30">
+                      <p className="text-xs font-medium text-destructive">
+                        ⚠ {result.inserts_falhos} linha(s) falharam ao inserir no banco
+                      </p>
+                      {result.erros && result.erros.length > 0 && (
+                        <details className="mt-1">
+                          <summary className="text-xs cursor-pointer text-muted-foreground">Ver detalhes</summary>
+                          <ul className="mt-1 text-[11px] text-muted-foreground space-y-0.5 max-h-40 overflow-y-auto">
+                            {result.erros.slice(0, 20).map((e, i) => (
+                              <li key={i}>• {e}</li>
+                            ))}
+                            {result.erros.length > 20 && <li>+ {result.erros.length - 20} outros</li>}
+                          </ul>
+                        </details>
+                      )}
+                    </div>
                   ) : null}
                 </div>
               </CardContent>
