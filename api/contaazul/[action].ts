@@ -193,7 +193,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const cc: string[] = Array.isArray(body.cc) ? body.cc.filter(Boolean) : [];
       const todos = [...new Set([...emails, ...cc])];
 
-      // 3. Monta subject + content (CA exige; senão retorna 400)
+      // 3. Monta title + content (campos certos vão DENTRO de viewOptions).
+      //    CA usa HTML simples no content (com <br> pra quebra de linha).
       const numero = info.data?.number ?? info.data?.numero ?? "";
       const ownerName = info.data?.owner?.name?.trim() || "Medwork";
       const clienteNome =
@@ -209,51 +210,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       });
-      const subject =
+      const title =
         body.subject ||
+        body.title ||
         `[Importante] A fatura Nº ${numero} de ${ownerName} está disponível`;
       let content =
         body.content ||
-        `Olá ${clienteNome},\nA Fatura Nº ${numero} no valor de R$ ${valorFmt} está disponível.`;
+        `Olá ${clienteNome},<br>A Fatura Nº ${numero} no valor de R$ ${valorFmt} está disponível.`;
       if (body.mensagem_extra) {
-        content += `\n\n${body.mensagem_extra}`;
+        const extraHtml = String(body.mensagem_extra).replace(/\n/g, "<br>");
+        content += `<br><br>${extraHtml}`;
       }
       const senderEmail =
         body.senderEmail ||
         process.env.CONTA_AZUL_SENDER_EMAIL ||
         "medwork.financeiro@gmail.com";
-      const senderName = body.senderName || ownerName;
+      // CA usa o nome do cliente em senderName (visto no payload da UI)
+      const senderName = body.senderName || clienteNome;
+      // sendEmailCopy=true manda cópia pro senderEmail automaticamente
+      const sendEmailCopy = body.send_copy_to_sender !== false;
 
-      // 4. POST do envio. CA exige subject/content/replyTo. Tenta vários
-      //    nomes simultaneamente (raiz e viewOptions) — campos extras são
-      //    ignorados pela CA, mas se algum casar passa.
-      const viewOptions: any = {
-        ...(body.viewOptions || {}),
-        subject,
-        title: subject,
-        content,
-        body: content,
-        message: content,
-        emailSubject: subject,
-        emailContent: content,
-        emailBody: content,
-        replyTo: senderEmail,
-        replyToEmail: senderEmail,
-        senderEmail,
-        senderName,
-      };
+      // 4. POST do envio com a estrutura correta descoberta via DevTools
       const payload = {
         customerMail: todos.join(","),
         notificationReference: vendaId,
         registryId: customerId,
         senderEmail,
         senderName,
-        replyTo: senderEmail,
-        subject,
-        title: subject,
-        content,
-        message: content,
-        viewOptions,
+        viewOptions: {
+          ...(body.viewOptions || {}),
+          title,
+          content,
+          sendEmailCopy,
+        },
       };
       const r = await caBffSession(
         "POST",
