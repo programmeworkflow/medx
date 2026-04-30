@@ -217,8 +217,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       let content =
         body.content ||
         `Olá ${clienteNome},<br>A Fatura Nº ${numero} no valor de R$ ${valorFmt} está disponível.`;
+      // CA bloqueia URLs no body por anti-phishing. Se mensagem_extra tiver
+      // URL, remove pra evitar 400. O link fica disponível na cópia que vai
+      // pro senderEmail (Medwork) via sendEmailCopy=true — a empresa
+      // responde o e-mail com o link.
+      let urlsRemovidas: string[] = [];
       if (body.mensagem_extra) {
-        const extraHtml = String(body.mensagem_extra).replace(/\n/g, "<br>");
+        let extraHtml = String(body.mensagem_extra).replace(/\n/g, "<br>");
+        const urlRegex = /\bhttps?:\/\/\S+|\b[a-z0-9-]+\.(com|com\.br|net|org|app|io)(\/\S*)?/gi;
+        const matches = extraHtml.match(urlRegex) || [];
+        if (matches.length > 0) {
+          urlsRemovidas = matches;
+          extraHtml = extraHtml.replace(urlRegex, "[link enviado em separado]");
+        }
         content += `<br><br>${extraHtml}`;
       }
       const senderEmail =
@@ -255,7 +266,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           error: `envio falhou: ${r.status} ${r.text?.slice(0, 200)}`,
         });
       }
-      return res.status(200).json({ ok: true, emails: todos, response: r.data });
+      return res.status(200).json({
+        ok: true,
+        emails: todos,
+        urls_removidas: urlsRemovidas,
+        response: r.data,
+      });
     }
 
     if (action === "billing-contact-venda") {
