@@ -18,6 +18,10 @@
     {
       "path": "/api/contaazul/oauth-refresh",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/contaazul/health-check",
+      "schedule": "13 9 * * 1"
     }
   ]
 }

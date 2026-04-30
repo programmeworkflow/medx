@@ -137,6 +137,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(result.ok ? 200 : 500).json(result);
     }
 
+    if (action === "health-check") {
+      // Cron semanal — testa todos os componentes da integração CA.
+      // Logs aparecem em Vercel → Functions logs. Status 500 sinaliza falha.
+      const checks: Record<string, any> = {};
+      let healthy = true;
+
+      try {
+        const t = await loadTokens();
+        const expIn = t ? Math.floor((new Date(t.expires_at).getTime() - Date.now()) / 1000) : null;
+        checks.oauth_token = {
+          ok: !!t && (expIn ?? 0) > 0,
+          expires_in_seconds: expIn,
+          expires_at: t?.expires_at,
+        };
+        if (!checks.oauth_token.ok) healthy = false;
+      } catch (e: any) {
+        checks.oauth_token = { ok: false, error: e?.message };
+        healthy = false;
+      }
+
+      try {
+        const r = await caApi("GET", "/v1/servicos?perPage=1");
+        const items = r?.itens || r?.items || [];
+        checks.oauth_call = { ok: items.length > 0, items_count: items.length };
+        if (!checks.oauth_call.ok) healthy = false;
+      } catch (e: any) {
+        checks.oauth_call = { ok: false, error: e?.message?.slice(0, 200) };
+        healthy = false;
+      }
+
+      try {
+        const cog = await cognitoStatus();
+        checks.cognito = {
+          ok: !!cog?.connected,
+          email: cog?.email,
+          expires_in_seconds: cog?.access_token_expires_in_seconds,
+        };
+        if (!checks.cognito.ok) healthy = false;
+      } catch (e: any) {
+        checks.cognito = { ok: false, error: e?.message };
+        healthy = false;
+      }
+
+      const summary = {
+        healthy,
+        checked_at: new Date().toISOString(),
+        checks,
+      };
+      console.log(`[CA HEALTH-CHECK] ${healthy ? "OK" : "DEGRADED"}`, JSON.stringify(summary));
+      return res.status(healthy ? 200 : 500).json(summary);
+    }
+
     if (action === "cost-centers") {
       // Lista centros de custo com filtro opcional ?busca=
       const busca = (req.query.busca as string) || "";
