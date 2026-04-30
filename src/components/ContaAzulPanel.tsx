@@ -128,6 +128,17 @@ export default function ContaAzulPanel() {
     for (const r of NOMES_AMIGAVEIS) if (r.match.test(limpo)) return r.out;
     return limpo;
   };
+  // Quando empresa muda, aplica modo de emissão de NF cadastrado
+  const empresaSelecionada = empresas.find((e) => e.id === empresaId) as any;
+  const nfModoEmpresa = (empresaSelecionada?.nf_modo as string | undefined) ||
+    (empresaSelecionada?.emitir_nf_padrao ? "automatica" : "manual");
+  useEffect(() => {
+    if (!empresaSelecionada) return;
+    if (nfModoEmpresa === "nao_emite") setEmitirNF(false);
+    else if (nfModoEmpresa === "automatica") setEmitirNF(true);
+    else setEmitirNF(false);
+  }, [empresaId]);
+
   // Quando serviço muda, busca rótulo amigável via IA (se não estiver em cache)
   useEffect(() => {
     if (!servicoSelecionado || rotuloCache[servicoSelecionado.id]) return;
@@ -648,17 +659,28 @@ export default function ContaAzulPanel() {
                     rows={4}
                   />
                 </div>
-                <label className="flex items-start gap-2 cursor-pointer p-3 rounded-lg border border-border hover:border-primary/50 transition-colors">
+                <label
+                  className={`flex items-start gap-2 p-3 rounded-lg border border-border transition-colors ${
+                    nfModoEmpresa === "nao_emite"
+                      ? "opacity-50 cursor-not-allowed"
+                      : "cursor-pointer hover:border-primary/50"
+                  }`}
+                >
                   <input
                     type="checkbox"
                     checked={emitirNF}
                     onChange={(e) => setEmitirNF(e.target.checked)}
+                    disabled={nfModoEmpresa === "nao_emite"}
                     className="mt-0.5"
                   />
                   <div className="flex-1">
                     <div className="text-sm font-medium">Emitir NFS-e automaticamente</div>
                     <div className="text-xs text-muted-foreground">
-                      Após criar a venda, transmite a NFS-e à prefeitura via Conta Azul.
+                      {nfModoEmpresa === "nao_emite"
+                        ? "Empresa configurada como 'não emite NF' (Cadastros → Empresas)."
+                        : nfModoEmpresa === "automatica"
+                        ? "Empresa configurada pra emitir sempre — já vem marcado."
+                        : "Após criar a venda, transmite a NFS-e à prefeitura via Conta Azul."}
                     </div>
                   </div>
                 </label>

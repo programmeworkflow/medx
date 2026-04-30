@@ -69,7 +69,7 @@ export default function Empresas() {
   const [dataFechamentoEspecial, setDataFechamentoEspecial] = useState<string>("");
   const [janelaFechamento, setJanelaFechamento] = useState("");
   const [retencaoPadrao, setRetencaoPadrao] = useState<string>("nenhuma");
-  const [emitirNfPadrao, setEmitirNfPadrao] = useState<boolean>(false);
+  const [nfModo, setNfModo] = useState<"nao_emite" | "manual" | "automatica">("manual");
   const [centroCustoId, setCentroCustoId] = useState<string>("");
 
   const { data: centrosCusto = [] } = useQuery({
@@ -123,7 +123,7 @@ export default function Empresas() {
   const resetForm = () => {
     setNome(""); setCnpj(""); setObs(""); setCategoria("medwork"); setTipo("propria_empresa"); setFatId(""); setAtiva(true);
     setVidasContrato(""); setVidasEso(""); setDataFechamentoEspecial(""); setJanelaFechamento("");
-    setRetencaoPadrao("nenhuma"); setEmitirNfPadrao(false);
+    setRetencaoPadrao("nenhuma"); setNfModo("manual");
     setCentroCustoId("");
   };
 
@@ -141,7 +141,15 @@ export default function Empresas() {
     setDataFechamentoEspecial(e.data_fechamento_especial || "");
     setJanelaFechamento(e.janela_fechamento || "");
     setRetencaoPadrao((e as any).retencao_padrao || "nenhuma");
-    setEmitirNfPadrao(!!(e as any).emitir_nf_padrao);
+    // nf_modo é o campo novo; cai pra emitir_nf_padrao boolean (legado)
+    const modoSalvo = (e as any).nf_modo as string | undefined;
+    setNfModo(
+      modoSalvo === "nao_emite" || modoSalvo === "automatica" || modoSalvo === "manual"
+        ? modoSalvo
+        : (e as any).emitir_nf_padrao
+        ? "automatica"
+        : "manual"
+    );
     setCentroCustoId((e as any).centro_custo_id || "");
     setOpen(true);
   };
@@ -188,7 +196,8 @@ export default function Empresas() {
       data_fechamento_especial: dataFechamentoEspecial || null,
       janela_fechamento: janelaFechamento || null,
       retencao_padrao: retencaoPadrao,
-      emitir_nf_padrao: emitirNfPadrao,
+      nf_modo: nfModo,
+      emitir_nf_padrao: nfModo === "automatica",
       centro_custo_id: centroCustoId || null,
     };
 
@@ -497,20 +506,23 @@ export default function Empresas() {
                           Pra credenciadas com regra automática: se valor ≤ R$ 215 não retém; acima retém CSLL+PIS+COFINS; se valor ≥ R$ 666,67 retém também IRRF.
                         </p>
                       </div>
-                      <label className="flex items-start gap-2 cursor-pointer p-3 rounded-lg border border-border">
-                        <input
-                          type="checkbox"
-                          checked={emitirNfPadrao}
-                          onChange={(e) => setEmitirNfPadrao(e.target.checked)}
-                          className="mt-0.5"
-                        />
-                        <div className="flex-1">
-                          <div className="text-sm font-medium">Emitir NF por padrão</div>
-                          <div className="text-xs text-muted-foreground">
-                            Ao faturar essa empresa em massa, a opção "Emitir NF" vem marcada automaticamente.
-                          </div>
-                        </div>
-                      </label>
+                      <div className="space-y-2">
+                        <Label>Modo de emissão de NF</Label>
+                        <Select value={nfModo} onValueChange={(v) => setNfModo(v as any)}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="nao_emite">Não emite NF</SelectItem>
+                            <SelectItem value="manual">Manual (marcar caso a caso)</SelectItem>
+                            <SelectItem value="automatica">Automática (toda venda gera NF)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Define o comportamento padrão ao faturar essa empresa.
+                          {nfModo === "nao_emite" && " O campo NF fica desabilitado."}
+                          {nfModo === "manual" && " Default desmarcado, marca quando precisar."}
+                          {nfModo === "automatica" && " Default marcado, toda venda gera NF."}
+                        </p>
+                      </div>
                     </AccordionContent>
                   </AccordionItem>
 

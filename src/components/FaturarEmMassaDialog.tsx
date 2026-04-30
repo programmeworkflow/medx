@@ -44,6 +44,8 @@ const fmtBRL = (v: number) =>
 
 interface CentroCusto { id: string; nome: string; }
 
+type NfModo = "nao_emite" | "manual" | "automatica";
+
 interface Linha {
   faturamentoId: string;
   empresaId: string;
@@ -52,6 +54,7 @@ interface Linha {
   categoria: string;
   valor: number;
   semCadastro: boolean;
+  nfModo: NfModo;
   // editáveis
   selected: boolean;
   centroCustoId: string;
@@ -153,6 +156,13 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
           ? "nenhuma"
           : (empresa?.retencao_padrao as RetencaoPadrao) ||
             (empresa?.categoria === "credenciada" ? "credenciada_auto" : "nenhuma");
+        const modoSalvo = empresa?.nf_modo as string | undefined;
+        const nfModo: NfModo =
+          modoSalvo === "nao_emite" || modoSalvo === "automatica" || modoSalvo === "manual"
+            ? modoSalvo
+            : empresa?.emitir_nf_padrao
+            ? "automatica"
+            : "manual";
         return {
           faturamentoId: f.id,
           empresaId: f.empresa_executora_id,
@@ -161,11 +171,12 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
           categoria: empresa?.categoria ?? "?",
           valor: Number(f.valor) || 0,
           semCadastro,
+          nfModo,
           selected: !semCadastro,
           centroCustoId: empresa?.centro_custo_id || "",
           dataVencimento: dataVencPadrao,
           retencao: retPadrao,
-          emitirNF: !!empresa?.emitir_nf_padrao,
+          emitirNF: nfModo === "automatica",
           emitirBoleto: false,
         };
       });
@@ -439,7 +450,8 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
                     <Checkbox
                       checked={l.emitirNF}
                       onCheckedChange={(c) => updateLinha(l.faturamentoId, { emitirNF: !!c })}
-                      disabled={l.semCadastro}
+                      disabled={l.semCadastro || l.nfModo === "nao_emite"}
+                      title={l.nfModo === "nao_emite" ? "Empresa configurada como 'não emite NF'" : undefined}
                     />
                   </TableCell>
                   <TableCell className="text-center">
