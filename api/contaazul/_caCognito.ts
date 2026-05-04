@@ -16,39 +16,9 @@ const CLIENT_ID =
 // O client público da UI não tem secret. Mas mantemos o secret do OAuth2 caso
 // alguém use um client custom com secret.
 const CLIENT_SECRET = process.env.CONTA_AZUL_COGNITO_CLIENT_SECRET || "";
-const TOTP_SECRET = (process.env.CONTA_AZUL_TOTP_SECRET || "").replace(/\s+/g, "").toUpperCase();
 
-// RFC 6238 TOTP — base32 seed → código de 6 dígitos válido por 30s
-function base32Decode(s: string): Buffer {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-  const clean = s.replace(/=+$/, "").replace(/\s+/g, "").toUpperCase();
-  let bits = "";
-  for (const c of clean) {
-    const idx = alphabet.indexOf(c);
-    if (idx < 0) throw new Error(`TOTP seed tem caractere inválido: ${c}`);
-    bits += idx.toString(2).padStart(5, "0");
-  }
-  const bytes: number[] = [];
-  for (let i = 0; i + 8 <= bits.length; i += 8) {
-    bytes.push(parseInt(bits.slice(i, i + 8), 2));
-  }
-  return Buffer.from(bytes);
-}
-
-function totpNow(secretBase32: string): string {
-  const key = base32Decode(secretBase32);
-  const counter = Math.floor(Date.now() / 1000 / 30);
-  const buf = Buffer.alloc(8);
-  buf.writeBigUInt64BE(BigInt(counter));
-  const hmac = crypto.createHmac("sha1", key).update(buf).digest();
-  const offset = hmac[hmac.length - 1] & 0x0f;
-  const code =
-    ((hmac[offset] & 0x7f) << 24) |
-    ((hmac[offset + 1] & 0xff) << 16) |
-    ((hmac[offset + 2] & 0xff) << 8) |
-    (hmac[offset + 3] & 0xff);
-  return (code % 1_000_000).toString().padStart(6, "0");
-}
+// MFA TOTP é manual: o usuário digita o código do Google Authenticator no painel
+// quando a sessão expira. Não armazenamos seed pra evitar risco de segurança.
 
 interface SessionTokens {
   id_token: string;
@@ -120,37 +90,11 @@ async function loginPassword(email: string, senha: string): Promise<SessionToken
     };
   }
 
-  // MFA TOTP — responde com código gerado a partir do seed
+  // MFA TOTP — exige código manual digitado pelo usuário no painel
   if (r?.ChallengeName === "SOFTWARE_TOKEN_MFA") {
-    if (!TOTP_SECRET) {
-      throw new Error(
-        "Conta exige MFA TOTP mas CONTA_AZUL_TOTP_SECRET não está configurado nas env vars"
-      );
-    }
-    const username = r.ChallengeParameters?.USER_ID_FOR_SRP || email;
-    const code = totpNow(TOTP_SECRET);
-    const r2: any = await cognitoCall("RespondToAuthChallenge", {
-      ChallengeName: "SOFTWARE_TOKEN_MFA",
-      ClientId: CLIENT_ID,
-      Session: r.Session,
-      ChallengeResponses: withSecretHash(
-        { USERNAME: username, SOFTWARE_TOKEN_MFA_CODE: code },
-        username
-      ),
-    });
-    const a = r2?.AuthenticationResult;
-    if (!a) {
-      throw new Error(
-        `MFA challenge não retornou AuthenticationResult: ${JSON.stringify(r2).slice(0, 250)}`
-      );
-    }
-    return {
-      id_token: a.IdToken,
-      access_token: a.AccessToken,
-      refresh_token: a.RefreshToken,
-      expires_at: new Date(jwtExpiry(a.IdToken) - 120000).toISOString(),
-      email,
-    };
+    throw new Error(
+      "MFA_REQUIRED: digite o código do Google Authenticator no painel de Faturamento"
+    );
   }
 
   throw new Error(
@@ -205,13 +149,10 @@ async function loadSession(): Promise<SessionTokens | null> {
 }
 
 export async function getValidIdToken(): Promise<string> {
-  // Prefere usar sessão Cognito existente (mesma usada pelo BFF). Só cai
-  // pro auto-login se a sessão estiver expirada e env vars existirem.
   const cached = await loadSession();
   if (cached?.id_token && new Date(cached.expires_at).getTime() > Date.now() + 60000) {
     return cached.id_token;
   }
-
   if (cached?.refresh_token && cached.email) {
     try {
       const refreshed = await refreshTokens(cached.email, cached.refresh_token);
@@ -219,15 +160,7 @@ export async function getValidIdToken(): Promise<string> {
       return refreshed.id_token;
     } catch (_) {}
   }
-
-  const email = process.env.CONTA_AZUL_EMAIL;
-  const senha = process.env.CONTA_AZUL_SENHA;
-  if (!email || !senha) {
-    throw new Error("Sessão Cognito expirada e CONTA_AZUL_EMAIL/SENHA não configurados");
-  }
-  const fresh = await loginPassword(email, senha);
-  await saveSession(fresh);
-  return fresh.id_token;
+  throw new Error("RELOGIN_REQUIRED: sessão expirou — faça login no painel de Faturamento");
 }
 
 // === Sessão BFF baseada em cookies copiados da UI ===
@@ -292,8 +225,8 @@ interface CognitoSession {
   email: string;
 }
 
-// Faz o fluxo Cognito completo: USER_PASSWORD_AUTH + (MFA TOTP se exigido).
-// totpCode pode ser fornecido pelo user OU gerado automaticamente do TOTP_SECRET.
+// Login Cognito interativo: USER_PASSWORD_AUTH + (MFA TOTP manual se exigido).
+// O totpCode é digitado pelo usuário no painel — nunca gerado automático.
 async function doCognitoLogin(
   email: string,
   senha: string,
@@ -308,13 +241,8 @@ async function doCognitoLogin(
   let auth = r?.AuthenticationResult;
 
   if (!auth && r?.ChallengeName === "SOFTWARE_TOKEN_MFA") {
-    // Usa TOTP fornecido ou gera do seed
-    let code = totpCode;
-    if (!code && TOTP_SECRET) {
-      code = totpNow(TOTP_SECRET);
-    }
-    if (!code) {
-      throw new Error("MFA_REQUIRED: passe totp_code ou configure CONTA_AZUL_TOTP_SECRET");
+    if (!totpCode) {
+      throw new Error("MFA_REQUIRED: digite o código do Google Authenticator");
     }
     const username = r.ChallengeParameters?.USER_ID_FOR_SRP || email;
     const r2: any = await cognitoCall("RespondToAuthChallenge", {
@@ -322,7 +250,7 @@ async function doCognitoLogin(
       ClientId: CLIENT_ID,
       Session: r.Session,
       ChallengeResponses: withSecretHash(
-        { USERNAME: username, SOFTWARE_TOKEN_MFA_CODE: code },
+        { USERNAME: username, SOFTWARE_TOKEN_MFA_CODE: totpCode },
         username
       ),
     });
@@ -351,26 +279,9 @@ export async function cognitoLoginInteractive(
   return saveCognitoSession(email, tokens.AccessToken, tokens.RefreshToken, null, senha);
 }
 
-// Auto-login: usa email+senha cifrados no banco + TOTP gerado do seed.
-// Chamado pelo cron quando refresh falha.
-async function cognitoAutoLogin(): Promise<CognitoSession> {
-  const sb = supaAdmin();
-  const { data } = await sb.from("contaazul_session").select("*").eq("id", 1).maybeSingle();
-  if (!data) throw new Error("Sem sessão prévia. Faça login interativo 1x via /api/contaazul/cognito-login");
-  const email = data.email;
-  let senha: string;
-  try {
-    senha = decryptSecret(data.access_token);
-    if (!senha) throw new Error("Senha não está salva — re-logar interativo");
-  } catch {
-    throw new Error("Senha não está salva — re-logar interativo");
-  }
-  if (!TOTP_SECRET) {
-    throw new Error("CONTA_AZUL_TOTP_SECRET não configurado");
-  }
-  const tokens = await doCognitoLogin(email, senha, undefined);
-  return saveCognitoSession(email, tokens.AccessToken, tokens.RefreshToken, data.session_id, senha);
-}
+// (Removido) cognitoAutoLogin — antes usava CONTA_AZUL_TOTP_SECRET pra re-logar
+// automaticamente quando o refresh expirava. Por segurança, agora o usuário
+// digita o código TOTP manualmente no painel quando precisar.
 
 function saveCognitoSessionLocal(s: CognitoSession, senha: string | null) {
   const sb = supaAdmin();
@@ -450,36 +361,29 @@ export async function cognitoRefresh(): Promise<CognitoSession> {
     deviceKey = payload.device_key || "";
   } catch {}
 
-  // Tenta REFRESH_TOKEN_AUTH primeiro. Se falhar (típico em fluxos pós-MFA
-  // do app client da CA), cai no auto-login completo (precisa email+senha
-  // salvos + CONTA_AZUL_TOTP_SECRET configurado).
-  try {
-    const params: Record<string, string> = withSecretHash(
-      { REFRESH_TOKEN: cur.refresh_token },
-      cur.email
-    );
-    if (deviceKey) params.DEVICE_KEY = deviceKey;
+  // Tenta REFRESH_TOKEN_AUTH. Se falhar, exige re-login interativo
+  // (digitar código TOTP manualmente no painel).
+  const params: Record<string, string> = withSecretHash(
+    { REFRESH_TOKEN: cur.refresh_token },
+    cur.email
+  );
+  if (deviceKey) params.DEVICE_KEY = deviceKey;
 
-    const r: any = await cognitoCall("InitiateAuth", {
-      AuthFlow: "REFRESH_TOKEN_AUTH",
-      ClientId: CLIENT_ID,
-      AuthParameters: params,
-    });
-    const a = r?.AuthenticationResult;
-    if (a?.AccessToken) {
-      return saveCognitoSession(
-        cur.email,
-        a.AccessToken,
-        a.RefreshToken || cur.refresh_token,
-        cur.session_id
-      );
-    }
-  } catch (err: any) {
-    // Refresh falhou — cai no fallback de auto-login
+  const r: any = await cognitoCall("InitiateAuth", {
+    AuthFlow: "REFRESH_TOKEN_AUTH",
+    ClientId: CLIENT_ID,
+    AuthParameters: params,
+  });
+  const a = r?.AuthenticationResult;
+  if (!a?.AccessToken) {
+    throw new Error("RELOGIN_REQUIRED: refresh expirou — faça login no painel de Faturamento");
   }
-
-  // Fallback: auto-login completo
-  return cognitoAutoLogin();
+  return saveCognitoSession(
+    cur.email,
+    a.AccessToken,
+    a.RefreshToken || cur.refresh_token,
+    cur.session_id
+  );
 }
 
 export async function cognitoStatus() {

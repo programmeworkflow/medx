@@ -574,12 +574,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           errors.push({ parcela: i + 1, error: err?.message?.slice(0, 200) });
         }
         // Salva sempre no Supabase como fonte de verdade local
-        await sb.from("contas_pagar").insert({
-          descricao: descParcela, valor: valorParcela, data_vencimento: dtStr,
-          fornecedor_id, fornecedor_nome: fornecedorNome,
-          categoria_id: categoria_id || null, centro_custo_id: centro_custo_id || null,
-          situacao: "PENDENTE", ca_id: caId, created_at: new Date().toISOString(),
-        }).catch(() => {});
+        try {
+          await sb.from("contas_pagar").insert({
+            descricao: descParcela, valor: valorParcela, data_vencimento: dtStr,
+            fornecedor_id, fornecedor_nome: fornecedorNome,
+            categoria_id: categoria_id || null, centro_custo_id: centro_custo_id || null,
+            situacao: "PENDENTE", ca_id: caId, created_at: new Date().toISOString(),
+          });
+        } catch {}
       }
       return res.status(200).json({ ok: true, criadas: n, erros: errors.length, errors });
     }
