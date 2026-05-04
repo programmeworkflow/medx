@@ -461,6 +461,68 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    if (action === "fornecedores") {
+      const busca = (req.query.busca as string) || "";
+      const url = busca
+        ? `/v1/fornecedores?busca=${encodeURIComponent(busca)}&tamanho_pagina=100&pagina=1`
+        : "/v1/fornecedores?tamanho_pagina=100&pagina=1";
+      const r = await caApi("GET", url);
+      const items: any[] = r?.itens || r?.content || (Array.isArray(r) ? r : []);
+      return res.status(200).json({
+        items: items
+          .map((f: any) => ({
+            id: f.id || f.uuid,
+            nome: f.nome || f.razao_social || f.razaoSocial || f.name || "",
+            documento: f.cpf_cnpj || f.cpfCnpj || f.cnpj || f.cpf || "",
+          }))
+          .sort((a: any, b: any) => a.nome.localeCompare(b.nome, "pt-BR")),
+      });
+    }
+
+    if (action === "contas-pagar") {
+      const { data_de, data_ate, situacao } = req.query;
+      const params: Record<string, string> = { tamanho_pagina: "100", pagina: "1" };
+      if (data_de) params.data_vencimento_de = data_de as string;
+      if (data_ate) params.data_vencimento_ate = data_ate as string;
+      if (situacao) params.situacao = situacao as string;
+      const r = await caApi("GET", `/v1/contas-a-pagar?${new URLSearchParams(params)}`);
+      return res.status(200).json({
+        items: r?.itens || r?.content || (Array.isArray(r) ? r : []),
+        total: r?.total ?? 0,
+      });
+    }
+
+    if (action === "criar-conta-pagar") {
+      if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+      const body: any = req.body || {};
+      const { fornecedor_id, descricao, valor, data_vencimento, parcelas, categoria_id, centro_custo_id } = body;
+      if (!fornecedor_id || !descricao || !valor || !data_vencimento) {
+        return res.status(400).json({ error: "fornecedor_id, descricao, valor e data_vencimento obrigatórios" });
+      }
+      const n = Math.max(1, Math.min(48, Math.floor(Number(parcelas) || 1)));
+      const valorParcela = Math.round((Number(valor) / n) * 100) / 100;
+      const results: any[] = [];
+      const errors: any[] = [];
+      for (let i = 0; i < n; i++) {
+        const dt = new Date(data_vencimento + "T12:00:00");
+        dt.setMonth(dt.getMonth() + i);
+        const payload: any = {
+          descricao: n > 1 ? `${descricao} (${i + 1}/${n})` : descricao,
+          valor: valorParcela,
+          data_vencimento: dt.toISOString().split("T")[0],
+          fornecedor: { id: fornecedor_id },
+        };
+        if (categoria_id) payload.categoria = { id: categoria_id };
+        if (centro_custo_id) payload.centro_custo = { id: centro_custo_id };
+        try {
+          results.push(await caApi("POST", "/v1/contas-a-pagar", payload));
+        } catch (err: any) {
+          errors.push({ parcela: i + 1, error: err?.message?.slice(0, 200) });
+        }
+      }
+      return res.status(200).json({ ok: errors.length === 0, criadas: results.length, erros: errors.length, errors });
+    }
+
     if (action === "nome-amigavel-servico") {
       // Recebe { nome } e devolve { rotulo } — nome curto pra observação da NF.
       // 1) Tenta mapeamento regex (rápido, sem custo)
