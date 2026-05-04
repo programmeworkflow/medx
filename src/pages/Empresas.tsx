@@ -93,7 +93,10 @@ export default function Empresas() {
       queryClient.invalidateQueries({ queryKey: ["empresas"] });
       setOpen(false);
       resetForm();
-      toast.success("Empresa cadastrada com sucesso!");
+      toast.success("✅ Empresa cadastrada com sucesso!", {
+        description: "Já está disponível na lista.",
+        duration: 5000,
+      });
     },
     onError: (err: any) => {
       toast.error(err.message?.includes("duplicate") ? "CNPJ já cadastrado." : "Erro ao cadastrar empresa.");
@@ -316,7 +319,15 @@ export default function Empresas() {
         queryClient.invalidateQueries({ queryKey: ["empresas"] });
       }
       setUploadResult({ success: validEmpresas.length, errors });
-      if (validEmpresas.length > 0) toast.success(`${validEmpresas.length} empresas importadas!`);
+      if (validEmpresas.length > 0) {
+        const ignoradas = errors.length;
+        toast.success(`✅ Importação concluída — ${validEmpresas.length} empresa${validEmpresas.length > 1 ? "s" : ""} cadastrada${validEmpresas.length > 1 ? "s" : ""}!`, {
+          description: ignoradas > 0
+            ? `${ignoradas} linha${ignoradas > 1 ? "s" : ""} ignorada${ignoradas > 1 ? "s" : ""} (veja os detalhes no diálogo)`
+            : "Todas as linhas foram processadas com sucesso.",
+          duration: 8000,
+        });
+      }
     } catch (err: any) { toast.error("Erro ao processar planilha: " + err.message); }
   }, [empresas, queryClient]);
 
@@ -349,14 +360,28 @@ export default function Empresas() {
                   <Input type="file" accept=".xlsx,.xls" onChange={handleUploadFile} className="mt-1" />
                 </div>
                 {uploadResult && (
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {uploadResult.success > 0 && (
-                      <div className="flex items-center gap-2 text-sm text-success">
-                        <CheckCircle2 className="h-4 w-4" />{uploadResult.success} empresas importadas
+                      <div className="flex items-center gap-3 rounded-lg border border-success/40 bg-success/10 p-4">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-success/20">
+                          <CheckCircle2 className="h-6 w-6 text-success" />
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-display text-base font-semibold text-success">
+                            ✅ Importação concluída!
+                          </p>
+                          <p className="text-sm text-muted-foreground mt-0.5">
+                            {uploadResult.success} {uploadResult.success === 1 ? "empresa cadastrada" : "empresas cadastradas"} com sucesso
+                            {uploadResult.errors.length > 0 && ` · ${uploadResult.errors.length} ignorada${uploadResult.errors.length > 1 ? "s" : ""}`}
+                          </p>
+                        </div>
                       </div>
                     )}
                     {uploadResult.errors.length > 0 && (
-                      <div className="space-y-1">
+                      <div className="space-y-1 max-h-64 overflow-y-auto rounded-md border border-border bg-muted/30 p-3">
+                        <p className="text-xs font-semibold text-muted-foreground mb-2">
+                          {uploadResult.errors.length} linha{uploadResult.errors.length > 1 ? "s" : ""} ignorada{uploadResult.errors.length > 1 ? "s" : ""}:
+                        </p>
                         {uploadResult.errors.map((err, i) => (
                           <div key={i} className="flex items-start gap-2 text-sm text-destructive">
                             <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />{err}
