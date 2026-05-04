@@ -17,6 +17,7 @@ import {
   cognitoLoginInteractive,
   cognitoRefresh,
   cognitoStatus,
+  getValidIdToken,
 } from "./_caCognito.js";
 
 // Garante que a pessoa na Conta Azul tem endereço completo (exigido pra NFS-e
@@ -616,6 +617,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       const method = (req.query.method as string)?.toUpperCase() || (req.method === "GET" ? "GET" : "POST");
       const useOauth = req.query.use_oauth === "1";
+      const useIdToken = req.query.use_id_token === "1";
+      if (useIdToken) {
+        const idToken = await getValidIdToken();
+        const r = await fetch(url, {
+          method,
+          headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json", Accept: "application/json", Origin: "https://pro.contaazul.com", Referer: "https://pro.contaazul.com/" },
+          body: method !== "GET" && req.body ? JSON.stringify(req.body) : undefined,
+        });
+        const text = await r.text();
+        let json: any = null; try { json = JSON.parse(text); } catch {}
+        return res.status(200).json({ ok: r.ok, status: r.status, data: json, text: text.slice(0, 1500) });
+      }
       const fn = useOauth ? caBff : caBffSession;
       const r = await fn(method, url, method === "GET" ? undefined : req.body);
       return res.status(200).json(r);
