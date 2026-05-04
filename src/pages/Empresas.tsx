@@ -41,7 +41,9 @@ export default function Empresas() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedEmpresa, setSelectedEmpresa] = useState<Empresa | null>(null);
-  const [uploadResult, setUploadResult] = useState<{ success: number; errors: string[] } | null>(null);
+  const [uploadResult, setUploadResult] = useState<{ success: number; atualizadas: number; errors: string[] } | null>(null);
+  const [dupesOpen, setDupesOpen] = useState(false);
+  const [duplicates, setDuplicates] = useState<[string, any[]][]>([]);
 
   // Filters
   const [filterCategoria, setFilterCategoria] = useState<string>("all");
@@ -266,10 +268,19 @@ export default function Empresas() {
       if (rows.length === 0) { toast.error("Planilha vazia."); return; }
       const errors: string[] = [];
       const validEmpresas: EmpresaInsert[] = [];
-      const existingCnpjs = new Set(empresas.map((e) => e.cnpj));
+      const updates: { id: string; categoria: Categoria; nome: string }[] = [];
+      const existingByCnpj = new Map(empresas.map((e) => [onlyDigits(e.cnpj), e]));
+      const seenInBatch = new Set<string>();
+      const normalizeCat = (s: any) => String(s ?? "")
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[̀-ͯ]/g, "")
+        .replace(/\s+/g, "_");
       rows.forEach((row, idx) => {
         const nome = row["Empresa"] || row["empresa"] || row["Nome"] || row["nome_empresa"];
-        const cnpj = row["CNPJ"] || row["cnpj"];
+        const cnpjRaw = row["CNPJ"] || row["cnpj"];
+        const cnpj = onlyDigits(String(cnpjRaw ?? ""));
         const cat  = row["Categoria"] || row["categoria"];
         const vc   = row["Vidas Contrato"] || row["vidas_contrato"];
         const ve   = row["Vidas ESO"]     || row["vidas_eso"];
@@ -277,30 +288,39 @@ export default function Empresas() {
         const dfe  = row["Data Fechamento Especial"] || row["data_fechamento_especial"];
         const obsv = row["Observacoes"] || row["observacoes"];
         if (!nome || !cnpj) { errors.push(`Linha ${idx + 2}: Nome ou CNPJ vazio`); return; }
-        if (existingCnpjs.has(cnpj)) { errors.push(`Linha ${idx + 2}: CNPJ ${cnpj} já cadastrado`); return; }
-        // Normaliza: lowercase, sem acentos, espaços → underscore
-        const normalizeCat = (s: any) => String(s ?? "")
-          .trim()
-          .toLowerCase()
-          .normalize("NFD")
-          .replace(/[̀-ͯ]/g, "")
-          .replace(/\s+/g, "_");
+        if (cnpj.length !== 14 && cnpj.length !== 11) {
+          errors.push(`Linha ${idx + 2}: CNPJ/CPF "${cnpjRaw}" tem ${cnpj.length} dígitos (precisa 14 ou 11)`);
+          return;
+        }
+        if (seenInBatch.has(cnpj)) {
+          errors.push(`Linha ${idx + 2}: CNPJ ${cnpjRaw} duplicado na própria planilha`);
+          return;
+        }
+        seenInBatch.add(cnpj);
         const catNorm = normalizeCat(cat);
         const validCat = categorias.find((c) => normalizeCat(c) === catNorm);
-        if (cat && !validCat) errors.push(`Linha ${idx + 2}: Categoria "${cat}" inválida — será ignorada`);
+        if (cat && !validCat) errors.push(`Linha ${idx + 2}: Categoria "${cat}" inválida — usado fallback "medwork"`);
         const toIntOrNull = (v: any) => {
           const n = parseInt(String(v ?? "").replace(/\D/g, ""), 10);
           return isFinite(n) && n > 0 ? n : null;
         };
         const toDateOrNull = (v: any) => {
           if (!v) return null;
-          // Accept "YYYY-MM-DD" or Excel serial
           if (v instanceof Date) return v.toISOString().slice(0, 10);
           const s = String(v);
           if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
           return null;
         };
-        existingCnpjs.add(cnpj);
+        const existente = existingByCnpj.get(cnpj);
+        if (existente) {
+          // Já cadastrado — se a planilha tem categoria nova/diferente, atualiza
+          if (validCat && validCat !== existente.categoria) {
+            updates.push({ id: existente.id, categoria: validCat, nome });
+          } else {
+            errors.push(`Linha ${idx + 2}: CNPJ ${cnpjRaw} já cadastrado (sem alterações)`);
+          }
+          return;
+        }
         validEmpresas.push({
           nome_empresa: nome,
           cnpj,
@@ -316,12 +336,21 @@ export default function Empresas() {
       });
       if (validEmpresas.length > 0) {
         await insertEmpresasBulk(validEmpresas);
+      }
+      // Aplica updates de categoria pra empresas já existentes
+      for (const u of updates) {
+        try { await updateEmpresa(u.id, { categoria: u.categoria }); } catch {}
+      }
+      if (validEmpresas.length > 0 || updates.length > 0) {
         queryClient.invalidateQueries({ queryKey: ["empresas"] });
       }
-      setUploadResult({ success: validEmpresas.length, errors });
-      if (validEmpresas.length > 0) {
+      setUploadResult({ success: validEmpresas.length, atualizadas: updates.length, errors });
+      if (validEmpresas.length > 0 || updates.length > 0) {
         const ignoradas = errors.length;
-        toast.success(`✅ Importação concluída — ${validEmpresas.length} empresa${validEmpresas.length > 1 ? "s" : ""} cadastrada${validEmpresas.length > 1 ? "s" : ""}!`, {
+        const partes: string[] = [];
+        if (validEmpresas.length > 0) partes.push(`${validEmpresas.length} cadastrada${validEmpresas.length > 1 ? "s" : ""}`);
+        if (updates.length > 0) partes.push(`${updates.length} atualizada${updates.length > 1 ? "s" : ""}`);
+        toast.success(`✅ Importação concluída — ${partes.join(", ")}!`, {
           description: ignoradas > 0
             ? `${ignoradas} linha${ignoradas > 1 ? "s" : ""} ignorada${ignoradas > 1 ? "s" : ""} (veja os detalhes no diálogo)`
             : "Todas as linhas foram processadas com sucesso.",
@@ -339,6 +368,27 @@ export default function Empresas() {
           <p className="text-sm text-muted-foreground">{empresas.length} cadastradas</p>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              const groups = new Map<string, typeof empresas>();
+              for (const e of empresas) {
+                const k = onlyDigits(e.cnpj);
+                const arr = groups.get(k) || [];
+                arr.push(e);
+                groups.set(k, arr);
+              }
+              const dupes = Array.from(groups.entries()).filter(([, arr]) => arr.length > 1);
+              if (dupes.length === 0) {
+                toast.success("Nenhuma duplicata encontrada — todos os CNPJs são únicos.");
+                return;
+              }
+              setDuplicates(dupes);
+              setDupesOpen(true);
+            }}
+          >
+            <AlertTriangle className="h-4 w-4 mr-2" /> Encontrar duplicatas
+          </Button>
           <Dialog open={uploadOpen} onOpenChange={(v) => { setUploadOpen(v); if (!v) setUploadResult(null); }}>
             <DialogTrigger asChild>
               <Button variant="outline"><Upload className="h-4 w-4 mr-2" /> Importar Planilha</Button>
@@ -361,7 +411,7 @@ export default function Empresas() {
                 </div>
                 {uploadResult && (
                   <div className="space-y-3">
-                    {uploadResult.success > 0 && (
+                    {(uploadResult.success > 0 || uploadResult.atualizadas > 0) && (
                       <div className="flex items-center gap-3 rounded-lg border border-success/40 bg-success/10 p-4">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-success/20">
                           <CheckCircle2 className="h-6 w-6 text-success" />
@@ -371,7 +421,9 @@ export default function Empresas() {
                             ✅ Importação concluída!
                           </p>
                           <p className="text-sm text-muted-foreground mt-0.5">
-                            {uploadResult.success} {uploadResult.success === 1 ? "empresa cadastrada" : "empresas cadastradas"} com sucesso
+                            {uploadResult.success > 0 && `${uploadResult.success} ${uploadResult.success === 1 ? "cadastrada" : "cadastradas"}`}
+                            {uploadResult.success > 0 && uploadResult.atualizadas > 0 && " · "}
+                            {uploadResult.atualizadas > 0 && `${uploadResult.atualizadas} ${uploadResult.atualizadas === 1 ? "atualizada" : "atualizadas"}`}
                             {uploadResult.errors.length > 0 && ` · ${uploadResult.errors.length} ignorada${uploadResult.errors.length > 1 ? "s" : ""}`}
                           </p>
                         </div>
@@ -804,6 +856,65 @@ export default function Empresas() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Dialog de duplicatas */}
+      <Dialog open={dupesOpen} onOpenChange={setDupesOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="font-display flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-warning" />
+              {duplicates.length} CNPJ{duplicates.length > 1 ? "s" : ""} duplicado{duplicates.length > 1 ? "s" : ""}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 mt-2">
+            <p className="text-sm text-muted-foreground">
+              Empresas com o mesmo CNPJ. Mantenha apenas 1 de cada — clique em "Excluir" nas duplicatas que quer remover.
+            </p>
+            {duplicates.map(([cnpj, arr]) => (
+              <div key={cnpj} className="rounded-lg border border-border p-3 space-y-2">
+                <p className="text-xs font-mono text-muted-foreground">CNPJ: {cnpj}</p>
+                {arr.map((e, i) => (
+                  <div key={e.id} className="flex items-center justify-between gap-2 rounded bg-muted/30 p-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{e.nome_empresa}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Categoria: {CATEGORIA_LABELS[e.categoria]} · {e.ativa ? "Ativa" : "Inativa"}
+                        {i === 0 && <span className="ml-2 text-success">✓ manter</span>}
+                      </p>
+                    </div>
+                    {i > 0 && (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={async () => {
+                          if (!confirm(`Excluir a duplicata "${e.nome_empresa}"?`)) return;
+                          try {
+                            await deleteEmpresa(e.id);
+                            queryClient.invalidateQueries({ queryKey: ["empresas"] });
+                            // remove do estado local
+                            setDuplicates((prev) => prev
+                              .map(([k, v]): [string, any[]] => [k, v.filter((x: any) => x.id !== e.id)])
+                              .filter(([, v]) => v.length > 1)
+                            );
+                            toast.success("Duplicata excluída.");
+                          } catch (err: any) {
+                            toast.error("Erro: " + (err?.message || "verifique faturamentos vinculados"));
+                          }
+                        }}
+                      >
+                        Excluir
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ))}
+            {duplicates.length === 0 && (
+              <p className="text-center text-sm text-success py-4">Nenhuma duplicata pendente!</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
