@@ -521,6 +521,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    if (action === "atualizar-conta-pagar") {
+      if (req.method !== "PATCH" && req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+      const body: any = req.body || {};
+      const { id, situacao } = body;
+      if (!id) return res.status(400).json({ error: "id obrigatório" });
+      const sb = supaAdmin();
+      const updates: any = { updated_at: new Date().toISOString() };
+      if (situacao) updates.situacao = situacao;
+      if (situacao === "PAGO") updates.data_pagamento = new Date().toISOString().split("T")[0];
+      const { error } = await sb.from("contas_pagar").update(updates).eq("id", id);
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json({ ok: true });
+    }
+
     if (action === "criar-conta-pagar") {
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
       const body: any = req.body || {};
