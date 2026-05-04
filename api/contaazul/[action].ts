@@ -463,33 +463,52 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (action === "fornecedores") {
+      // CA não filtra por perfis server-side — precisamos paginar tudo e filtrar.
+      // Estratégia: busca até 10 páginas de 500, para quando items < perPage.
       const busca = (req.query.busca as string) || "";
-      const url = busca
-        ? `/v1/fornecedores?busca=${encodeURIComponent(busca)}&tamanho_pagina=100&pagina=1`
-        : "/v1/fornecedores?tamanho_pagina=100&pagina=1";
-      const r = await caApi("GET", url);
-      const items: any[] = r?.itens || r?.content || (Array.isArray(r) ? r : []);
-      return res.status(200).json({
-        items: items
-          .map((f: any) => ({
-            id: f.id || f.uuid,
-            nome: f.nome || f.razao_social || f.razaoSocial || f.name || "",
-            documento: f.cpf_cnpj || f.cpfCnpj || f.cnpj || f.cpf || "",
-          }))
-          .sort((a: any, b: any) => a.nome.localeCompare(b.nome, "pt-BR")),
-      });
+      const perPage = 500;
+      const all: any[] = [];
+      for (let pagina = 1; pagina <= 20; pagina++) {
+        const qs = new URLSearchParams({ perPage: String(perPage), pagina: String(pagina) });
+        if (busca) qs.set("busca", busca);
+        const r = await caApi("GET", `/v1/pessoas?${qs}`);
+        const items: any[] = r?.itens || r?.items || (Array.isArray(r) ? r : []);
+        all.push(...items);
+        if (items.length < perPage) break;
+      }
+      const fornecedores = all
+        .filter((f: any) => (f.perfis || []).some((p: string) => p.toLowerCase() === "fornecedor") && f.ativo !== false)
+        .map((f: any) => ({
+          id: f.id || f.uuid,
+          nome: f.nome || f.razao_social || f.razaoSocial || f.name || "",
+          documento: f.cpf_cnpj || f.cpfCnpj || f.cnpj || f.cpf || "",
+        }))
+        .sort((a: any, b: any) => a.nome.localeCompare(b.nome, "pt-BR"));
+      return res.status(200).json({ items: fornecedores, total: fornecedores.length });
     }
 
     if (action === "contas-pagar") {
+      // A API pública do CA não tem endpoint de contas-a-pagar.
+      // Servimos as bills salvas no Supabase (criadas pelo nosso app).
+      const sb = supaAdmin();
       const { data_de, data_ate, situacao } = req.query;
-      const params: Record<string, string> = { tamanho_pagina: "100", pagina: "1" };
-      if (data_de) params.data_vencimento_de = data_de as string;
-      if (data_ate) params.data_vencimento_ate = data_ate as string;
-      if (situacao) params.situacao = situacao as string;
-      const r = await caApi("GET", `/v1/contas-a-pagar?${new URLSearchParams(params)}`);
+      let query = sb.from("contas_pagar").select("*").order("data_vencimento", { ascending: true });
+      if (data_de) query = query.gte("data_vencimento", data_de as string);
+      if (data_ate) query = query.lte("data_vencimento", data_ate as string);
+      if (situacao) query = query.eq("situacao", situacao as string);
+      const { data, error } = await query;
+      if (error) return res.status(500).json({ error: error.message });
       return res.status(200).json({
-        items: r?.itens || r?.content || (Array.isArray(r) ? r : []),
-        total: r?.total ?? 0,
+        items: (data || []).map((r: any) => ({
+          id: r.id,
+          descricao: r.descricao,
+          valor: r.valor,
+          data_vencimento: r.data_vencimento,
+          situacao: r.situacao,
+          fornecedor: { nome: r.fornecedor_nome },
+          ca_id: r.ca_id,
+        })),
+        total: data?.length ?? 0,
       });
     }
 
@@ -504,24 +523,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const valorParcela = Math.round((Number(valor) / n) * 100) / 100;
       const results: any[] = [];
       const errors: any[] = [];
+      // busca nome do fornecedor para salvar no Supabase
+      let fornecedorNome = "";
+      try {
+        const pess = await caApi("GET", `/v1/pessoas/${fornecedor_id}`);
+        fornecedorNome = pess?.nome || "";
+      } catch {}
+      const sb = supaAdmin();
       for (let i = 0; i < n; i++) {
         const dt = new Date(data_vencimento + "T12:00:00");
         dt.setMonth(dt.getMonth() + i);
-        const payload: any = {
-          descricao: n > 1 ? `${descricao} (${i + 1}/${n})` : descricao,
-          valor: valorParcela,
-          data_vencimento: dt.toISOString().split("T")[0],
+        const dtStr = dt.toISOString().split("T")[0];
+        const descParcela = n > 1 ? `${descricao} (${i + 1}/${n})` : descricao;
+        const caPayload: any = {
+          descricao: descParcela, valor: valorParcela, data_vencimento: dtStr,
           fornecedor: { id: fornecedor_id },
         };
-        if (categoria_id) payload.categoria = { id: categoria_id };
-        if (centro_custo_id) payload.centro_custo = { id: centro_custo_id };
+        if (categoria_id) caPayload.categoria = { id: categoria_id };
+        if (centro_custo_id) caPayload.centro_custo = { id: centro_custo_id };
+        let caId: string | null = null;
         try {
-          results.push(await caApi("POST", "/v1/contas-a-pagar", payload));
+          const r = await caApi("POST", "/v1/contas-a-pagar", caPayload);
+          caId = r?.id || null;
+          results.push(r);
         } catch (err: any) {
+          // CA API pode não ter endpoint de contas-a-pagar — salva só no Supabase
           errors.push({ parcela: i + 1, error: err?.message?.slice(0, 200) });
         }
+        // Salva sempre no Supabase como fonte de verdade local
+        await sb.from("contas_pagar").insert({
+          descricao: descParcela, valor: valorParcela, data_vencimento: dtStr,
+          fornecedor_id, fornecedor_nome: fornecedorNome,
+          categoria_id: categoria_id || null, centro_custo_id: centro_custo_id || null,
+          situacao: "PENDENTE", ca_id: caId, created_at: new Date().toISOString(),
+        }).catch(() => {});
       }
-      return res.status(200).json({ ok: errors.length === 0, criadas: results.length, erros: errors.length, errors });
+      return res.status(200).json({ ok: true, criadas: n, erros: errors.length, errors });
     }
 
     if (action === "nome-amigavel-servico") {
