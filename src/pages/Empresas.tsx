@@ -275,7 +275,15 @@ export default function Empresas() {
         const obsv = row["Observacoes"] || row["observacoes"];
         if (!nome || !cnpj) { errors.push(`Linha ${idx + 2}: Nome ou CNPJ vazio`); return; }
         if (existingCnpjs.has(cnpj)) { errors.push(`Linha ${idx + 2}: CNPJ ${cnpj} já cadastrado`); return; }
-        const validCat = categorias.includes(cat as Categoria) ? (cat as Categoria) : undefined;
+        // Normaliza: lowercase, sem acentos, espaços → underscore
+        const normalizeCat = (s: any) => String(s ?? "")
+          .trim()
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[̀-ͯ]/g, "")
+          .replace(/\s+/g, "_");
+        const catNorm = normalizeCat(cat);
+        const validCat = categorias.find((c) => normalizeCat(c) === catNorm);
         if (cat && !validCat) errors.push(`Linha ${idx + 2}: Categoria "${cat}" inválida — será ignorada`);
         const toIntOrNull = (v: any) => {
           const n = parseInt(String(v ?? "").replace(/\D/g, ""), 10);
