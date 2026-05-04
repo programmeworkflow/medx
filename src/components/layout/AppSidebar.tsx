@@ -5,13 +5,16 @@ import { useTheme } from "@/contexts/ThemeContext";
 import logo from "@/assets/logo-medx.png";
 import { cn } from "@/lib/utils";
 
-const links = [
-  { to: "/dashboard",    icon: LayoutDashboard, label: "Dashboard" },
-  { to: "/cadastro",     icon: Building2,       label: "Cadastro" },
-  { to: "/treinamentos", icon: GraduationCap,   label: "Treinamentos" },
-  { to: "/importacao",   icon: Upload,          label: "Importação ESO" },
-  { to: "/faturamento",  icon: Receipt,         label: "Faturamento" },
-  { to: "/configuracoes",icon: Settings,        label: "Configurações" },
+type NavItem = { to: string; icon: any; label: string };
+const groups: NavItem[][] = [
+  [{ to: "/dashboard", icon: LayoutDashboard, label: "Dashboard" }],
+  [
+    { to: "/importacao",  icon: Upload,  label: "Importação ESO" },
+    { to: "/faturamento", icon: Receipt, label: "Faturamento" },
+  ],
+  [{ to: "/treinamentos", icon: GraduationCap, label: "Treinamentos" }],
+  [{ to: "/cadastro",     icon: Building2,     label: "Cadastro" }],
+  [{ to: "/configuracoes",icon: Settings,      label: "Configurações" }],
 ];
 
 export default function AppSidebar() {
@@ -31,22 +34,27 @@ export default function AppSidebar() {
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-1">
-        {links.map(({ to, icon: Icon, label }) => (
-          <NavLink
-            key={to}
-            to={to}
-            className={({ isActive }) =>
-              cn(
-                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
-                isActive
-                  ? "bg-sidebar-accent text-sidebar-primary"
-                  : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-              )
-            }
-          >
-            <Icon className="h-5 w-5" />
-            {label}
-          </NavLink>
+        {groups.map((group, gi) => (
+          <div key={gi}>
+            {gi > 0 && <div className="my-2 border-t border-sidebar-border/60" />}
+            {group.map(({ to, icon: Icon, label }) => (
+              <NavLink
+                key={to}
+                to={to}
+                className={({ isActive }) =>
+                  cn(
+                    "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                    isActive
+                      ? "bg-sidebar-accent text-sidebar-primary"
+                      : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                  )
+                }
+              >
+                <Icon className="h-5 w-5" />
+                {label}
+              </NavLink>
+            ))}
+          </div>
         ))}
       </nav>
 
