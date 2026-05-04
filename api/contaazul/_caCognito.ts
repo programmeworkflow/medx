@@ -205,27 +205,26 @@ async function loadSession(): Promise<SessionTokens | null> {
 }
 
 export async function getValidIdToken(): Promise<string> {
-  const email = process.env.CONTA_AZUL_EMAIL;
-  const senha = process.env.CONTA_AZUL_SENHA;
-  if (!email || !senha) {
-    throw new Error("CONTA_AZUL_EMAIL/CONTA_AZUL_SENHA não configurados nas env vars do Vercel");
-  }
-
+  // Prefere usar sessão Cognito existente (mesma usada pelo BFF). Só cai
+  // pro auto-login se a sessão estiver expirada e env vars existirem.
   const cached = await loadSession();
-  if (cached && cached.email === email && new Date(cached.expires_at).getTime() > Date.now() + 60000) {
+  if (cached?.id_token && new Date(cached.expires_at).getTime() > Date.now() + 60000) {
     return cached.id_token;
   }
 
-  if (cached && cached.email === email && cached.refresh_token) {
+  if (cached?.refresh_token && cached.email) {
     try {
-      const refreshed = await refreshTokens(email, cached.refresh_token);
+      const refreshed = await refreshTokens(cached.email, cached.refresh_token);
       await saveSession(refreshed);
       return refreshed.id_token;
-    } catch (_) {
-      // refresh expirado — relogin
-    }
+    } catch (_) {}
   }
 
+  const email = process.env.CONTA_AZUL_EMAIL;
+  const senha = process.env.CONTA_AZUL_SENHA;
+  if (!email || !senha) {
+    throw new Error("Sessão Cognito expirada e CONTA_AZUL_EMAIL/SENHA não configurados");
+  }
   const fresh = await loginPassword(email, senha);
   await saveSession(fresh);
   return fresh.id_token;
