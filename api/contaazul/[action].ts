@@ -463,19 +463,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (action === "fornecedores") {
-      // CA não filtra por perfis server-side — precisamos paginar tudo e filtrar.
-      // Estratégia: busca até 10 páginas de 500, para quando items < perPage.
+      // CA não filtra por perfis server-side. Paginamos tudo com tamanho_pagina=100
+      // e filtramos client-side. Páginas paralelas após a 1ª para ser rápido.
       const busca = (req.query.busca as string) || "";
-      const perPage = 500;
-      const all: any[] = [];
-      for (let pagina = 1; pagina <= 20; pagina++) {
-        const qs = new URLSearchParams({ perPage: String(perPage), pagina: String(pagina) });
-        if (busca) qs.set("busca", busca);
-        const r = await caApi("GET", `/v1/pessoas?${qs}`);
-        const items: any[] = r?.itens || r?.items || (Array.isArray(r) ? r : []);
-        all.push(...items);
-        if (items.length < perPage) break;
+      const PAGE = 100;
+      const qs1 = new URLSearchParams({ tamanho_pagina: String(PAGE), pagina: "1" });
+      if (busca) qs1.set("busca", busca);
+      const r1 = await caApi("GET", `/v1/pessoas?${qs1}`);
+      const items1: any[] = r1?.items || r1?.itens || (Array.isArray(r1) ? r1 : []);
+      const total: number = r1?.totalItems ?? items1.length;
+      const totalPages = Math.ceil(total / PAGE);
+      // Busca páginas 2..N em paralelo (lotes de 5 pra não sobrecarregar)
+      const remaining: any[] = [];
+      for (let start = 2; start <= totalPages; start += 5) {
+        const batch = Array.from({ length: Math.min(5, totalPages - start + 1) }, (_, i) => {
+          const qs = new URLSearchParams({ tamanho_pagina: String(PAGE), pagina: String(start + i) });
+          if (busca) qs.set("busca", busca);
+          return caApi("GET", `/v1/pessoas?${qs}`).then((r: any) => r?.items || r?.itens || []).catch(() => []);
+        });
+        const pages = await Promise.all(batch);
+        pages.forEach((p: any[]) => remaining.push(...p));
       }
+      const all = [...items1, ...remaining];
       const fornecedores = all
         .filter((f: any) => (f.perfis || []).some((p: string) => p.toLowerCase() === "fornecedor") && f.ativo !== false)
         .map((f: any) => ({
