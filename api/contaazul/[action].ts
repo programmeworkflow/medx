@@ -980,6 +980,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    if (action === "debug-brasilapi") {
+      const cnpj = String(req.query.cnpj || "42643059000148").replace(/\D/g, "");
+      const t0 = Date.now();
+      try {
+        const r = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`, {
+          signal: AbortSignal.timeout(15000),
+        });
+        const text = await r.text();
+        let json: any = null;
+        try { json = JSON.parse(text); } catch {}
+        return res.status(200).json({
+          ok: r.ok,
+          status: r.status,
+          ms: Date.now() - t0,
+          opcao_pelo_simples: json?.opcao_pelo_simples,
+          opcao_pelo_mei: json?.opcao_pelo_mei,
+          razao_social: json?.razao_social,
+          raw_text: text.slice(0, 300),
+        });
+      } catch (err: any) {
+        return res.status(200).json({
+          ok: false,
+          ms: Date.now() - t0,
+          error: err?.message || String(err),
+          name: err?.name,
+        });
+      }
+    }
+
     if (action === "reset-retencao") {
       // Reseta retencao_atualizada_em → todas voltam pra fila do sync
       const sb = supaAdmin();
