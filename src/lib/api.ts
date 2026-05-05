@@ -122,6 +122,22 @@ export async function deleteEmpresa(id: string) {
   if (error) throw error;
 }
 
+// Mescla uma empresa duplicada na empresa "manter": move TODOS os dados
+// vinculados (faturamentos, treinamentos, empresas que faturam por ela) e
+// só depois exclui o registro duplicado. Preserva histórico.
+export async function mergeEmpresaDuplicate(keepId: string, duplicateId: string) {
+  // 1. Move faturamentos da duplicata pra "manter"
+  await supabase.from("faturamentos").update({ empresa_id: keepId }).eq("empresa_id", duplicateId);
+  await supabase.from("faturamentos").update({ empresa_faturadora_id: keepId }).eq("empresa_faturadora_id", duplicateId);
+  // 2. Move treinamentos
+  await supabase.from("treinamentos").update({ empresa_id: keepId }).eq("empresa_id", duplicateId);
+  // 3. Move qualquer empresa que tenha a duplicata como faturadora
+  await supabase.from("empresas").update({ empresa_faturadora_id: keepId }).eq("empresa_faturadora_id", duplicateId);
+  // 4. Agora pode excluir
+  const { error } = await supabase.from("empresas").delete().eq("id", duplicateId);
+  if (error) throw error;
+}
+
 export type FaturamentoUpdate = Database["public"]["Tables"]["faturamentos"]["Update"];
 
 export async function updateFaturamento(id: string, updates: FaturamentoUpdate) {

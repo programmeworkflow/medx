@@ -24,6 +24,7 @@ import {
   insertEmpresasBulk,
   updateEmpresa,
   deleteEmpresa,
+  mergeEmpresaDuplicate,
   CATEGORIA_LABELS,
   type Categoria,
   type TipoFaturamento,
@@ -921,7 +922,7 @@ export default function Empresas() {
                     disabled={bulkDeleting}
                     onClick={() => setBulkConfirmOpen(true)}
                   >
-                    {bulkDeleting ? `Excluindo... ${bulkProgress.ok + bulkProgress.fail}/${totalDupes}` : "Excluir todas"}
+                    {bulkDeleting ? `Mesclando... ${bulkProgress.ok + bulkProgress.fail}/${totalDupes}` : "Mesclar todas"}
                   </Button>
                 </div>
               );
@@ -944,27 +945,30 @@ export default function Empresas() {
                         size="sm"
                         onClick={async () => {
                           const confirmed = await confirmDialog({
-                            title: "Excluir duplicata?",
-                            description: `Remover "${e.nome_empresa}" do cadastro. Esta ação não pode ser desfeita.`,
-                            confirmText: "Excluir",
+                            title: "Mesclar nesta duplicata?",
+                            description: `Faturamentos e treinamentos de "${e.nome_empresa}" serão movidos pra "${arr[0].nome_empresa}", e o cadastro duplicado será excluído.`,
+                            confirmText: "Mesclar",
                             variant: "danger",
                           });
                           if (!confirmed) return;
                           try {
-                            await deleteEmpresa(e.id);
+                            await mergeEmpresaDuplicate(arr[0].id, e.id);
                             queryClient.invalidateQueries({ queryKey: ["empresas"] });
-                            // remove do estado local
+                            queryClient.invalidateQueries({ queryKey: ["empresas"] });
+                            queryClient.invalidateQueries({ queryKey: ["faturamentos"] });
+                            queryClient.invalidateQueries({ queryKey: ["treinamentos"] });
                             setDuplicates((prev) => prev
                               .map(([k, v]): [string, any[]] => [k, v.filter((x: any) => x.id !== e.id)])
                               .filter(([, v]) => v.length > 1)
                             );
-                            toast.success("Duplicata excluída.");
+                            toast.success("Duplicata mesclada — histórico preservado.");
                           } catch (err: any) {
-                            toast.error("Erro: " + (err?.message || "verifique faturamentos vinculados"));
+                            console.error("Falha no merge", err);
+                            toast.error("Erro: " + (err?.message || "veja console (F12)"));
                           }
                         }}
                       >
-                        Excluir
+                        Mesclar
                       </Button>
                     )}
                   </div>
@@ -983,14 +987,21 @@ export default function Empresas() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Excluir {duplicates.reduce((s, [, arr]) => s + (arr.length - 1), 0)} duplicata
+              Mesclar {duplicates.reduce((s, [, arr]) => s + (arr.length - 1), 0)} duplicata
               {duplicates.reduce((s, [, arr]) => s + (arr.length - 1), 0) > 1 ? "s" : ""}?
             </AlertDialogTitle>
-            <AlertDialogDescription>
-              Mantém a 1ª empresa de cada grupo de CNPJ duplicado e remove as demais.
-              Esta ação não pode ser desfeita.
-              <br /><br />
-              <strong className="text-destructive">Atenção:</strong> empresas com faturamentos vinculados não serão excluídas (FK constraint).
+            <AlertDialogDescription asChild>
+              <div className="text-sm text-muted-foreground space-y-2">
+                <p>Pra cada grupo de CNPJ duplicado:</p>
+                <ul className="list-disc list-inside space-y-1 pl-2">
+                  <li><strong>Faturamentos</strong> da duplicata serão movidos pra empresa "manter"</li>
+                  <li><strong>Treinamentos</strong> também serão movidos</li>
+                  <li>O cadastro duplicado é então excluído</li>
+                </ul>
+                <p className="pt-1">
+                  <strong className="text-foreground">Histórico preservado.</strong> Esta ação não pode ser desfeita.
+                </p>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -999,56 +1010,49 @@ export default function Empresas() {
               disabled={bulkDeleting}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={async (ev) => {
-                ev.preventDefault(); // não fecha automaticamente
+                ev.preventDefault();
                 setBulkDeleting(true);
                 setBulkProgress({ ok: 0, fail: 0, errors: [] });
-                const toDelete = duplicates.flatMap(([, arr]) => arr.slice(1));
+                // Merge: pra cada grupo, mantém a 1ª e mescla as demais nela
                 let ok = 0, fail = 0;
                 const errors: string[] = [];
-                for (const e of toDelete) {
-                  try {
-                    await deleteEmpresa(e.id);
-                    ok++;
-                  } catch (err: any) {
-                    fail++;
-                    errors.push(`${e.nome_empresa}: ${err?.message || "erro desconhecido"}`);
-                    console.error("Falha ao excluir", e.nome_empresa, err);
+                for (const [, arr] of duplicates) {
+                  const keep = arr[0];
+                  for (const dup of arr.slice(1)) {
+                    try {
+                      await mergeEmpresaDuplicate(keep.id, dup.id);
+                      ok++;
+                    } catch (err: any) {
+                      fail++;
+                      errors.push(`${dup.nome_empresa}: ${err?.message || "erro"}`);
+                      console.error("Falha ao mesclar", dup.nome_empresa, err);
+                    }
+                    setBulkProgress({ ok, fail, errors });
                   }
-                  setBulkProgress({ ok, fail, errors });
                 }
                 queryClient.invalidateQueries({ queryKey: ["empresas"] });
+                queryClient.invalidateQueries({ queryKey: ["faturamentos"] });
+                queryClient.invalidateQueries({ queryKey: ["treinamentos"] });
                 setBulkConfirmOpen(false);
                 setBulkDeleting(false);
                 if (fail === 0) {
-                  toast.success(`✅ ${ok} duplicata${ok > 1 ? "s" : ""} excluída${ok > 1 ? "s" : ""}!`, { duration: 6000 });
+                  toast.success(`✅ ${ok} duplicata${ok > 1 ? "s" : ""} mesclada${ok > 1 ? "s" : ""}!`, {
+                    description: "Faturamentos e treinamentos foram preservados na empresa mantida.",
+                    duration: 6000,
+                  });
                   setDuplicates([]);
                   setDupesOpen(false);
                 } else {
-                  toast.warning(
-                    `${ok} excluída(s) · ${fail} falhou`,
-                    {
-                      description: `Ver detalhes nos logs do navegador (F12). Provável: faturamento vinculado.`,
-                      duration: 10000,
-                    }
-                  );
-                  // Re-detecta duplicatas restantes após exclusões parciais
-                  if (ok > 0) {
-                    const groups = new Map<string, typeof empresas>();
-                    for (const e of empresas) {
-                      const k = onlyDigits(e.cnpj);
-                      const arr = groups.get(k) || [];
-                      arr.push(e);
-                      groups.set(k, arr);
-                    }
-                    const dupes = Array.from(groups.entries()).filter(([, arr]) => arr.length > 1);
-                    setDuplicates(dupes as [string, any[]][]);
-                  }
+                  toast.warning(`${ok} mesclada(s) · ${fail} falhou`, {
+                    description: "Ver detalhes nos logs (F12).",
+                    duration: 10000,
+                  });
                 }
               }}
             >
               {bulkDeleting
-                ? `Excluindo ${bulkProgress.ok + bulkProgress.fail}/${duplicates.reduce((s, [, arr]) => s + (arr.length - 1), 0)}…`
-                : "Excluir todas"}
+                ? `Mesclando ${bulkProgress.ok + bulkProgress.fail}/${duplicates.reduce((s, [, arr]) => s + (arr.length - 1), 0)}…`
+                : "Mesclar todas"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
