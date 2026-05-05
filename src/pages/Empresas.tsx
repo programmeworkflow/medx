@@ -479,7 +479,7 @@ export default function Empresas() {
                 let totalDone = 0;
                 let totalFound = 0;
                 while (true) {
-                  const r = await fetch(`https://medx-flow-mocha.vercel.app/api/contaazul/sync-retencao?offset=${offset}&limit=50`);
+                  const r = await fetch(`https://medx-flow-mocha.vercel.app/api/contaazul/sync-retencao?offset=${offset}&limit=20`);
                   const j = await r.json();
                   if (!j.ok) throw new Error(j.error || "erro");
                   totalDone += j.processadas || 0;

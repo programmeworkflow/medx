@@ -689,7 +689,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Carrega lista completa do CA uma vez (CA não tem busca por documento),
       // indexa por documento, e processa em chunks pra caber no timeout.
       const offset = Number(req.query.offset || 0);
-      const limit = Math.min(Number(req.query.limit || 30), 50);
+      const limit = Math.min(Number(req.query.limit || 20), 50);
       const sb = supaAdmin();
 
       // 1. Carrega map { documento → ca_pessoa } UMA VEZ
@@ -706,7 +706,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const stats = { processadas: 0, encontradas_ca: 0, nao_encontradas: 0, erros: [] as any[] };
 
-      // 3. Processa em paralelo (3 simultâneos — BrasilAPI tem rate limit ~5 req/s)
+      // 3. Processa SEQUENCIALMENTE com delay (APIs grátis têm rate limit baixo)
       const tasks = (empresas || []).map((empresa: any) => async () => {
         try {
           const cnpjDigits = String(empresa.cnpj || "").replace(/\D/g, "");
@@ -735,9 +735,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       });
 
-      // Roda em batches de 3 (BrasilAPI rate limit)
-      for (let i = 0; i < tasks.length; i += 3) {
-        await Promise.all(tasks.slice(i, i + 3).map((t) => t()));
+      // Roda 1 por vez com pausa (respeita rate limit das APIs)
+      for (const task of tasks) {
+        await task();
+        await new Promise((r) => setTimeout(r, 250)); // 250ms entre cada empresa
       }
 
       const nextOffset = (empresas?.length || 0) === limit ? offset + limit : null;
@@ -1062,14 +1063,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (action === "reset-retencao") {
-      // Reseta retencao_atualizada_em → todas voltam pra fila do sync
+      // Reseta retencao_atualizada_em → todas voltam pra fila do sync.
+      // Use ?apenas_indefinidas=1 pra resetar SÓ as que ficaram em indefinido
+      // (preserva as que já estão corretas).
       const sb = supaAdmin();
-      const { error, count } = await sb
-        .from("empresas")
-        .update({ retencao_atualizada_em: null }, { count: "exact" })
-        .not("id", "is", null);
+      const apenasIndefinidas = req.query.apenas_indefinidas === "1";
+      let q = sb.from("empresas").update({ retencao_atualizada_em: null }, { count: "exact" });
+      if (apenasIndefinidas) {
+        q = q.or("regime_tributario.eq.indefinido,regime_tributario.is.null");
+      } else {
+        q = q.not("id", "is", null);
+      }
+      // Sempre preserva overrides manuais
+      q = q.or("retencao_fonte.is.null,retencao_fonte.neq.manual");
+      const { error, count } = await q;
       if (error) return res.status(500).json({ error: error.message });
-      return res.status(200).json({ ok: true, resetadas: count });
+      return res.status(200).json({ ok: true, resetadas: count, apenas_indefinidas: apenasIndefinidas });
     }
 
     if (action === "retencao-stats") {
