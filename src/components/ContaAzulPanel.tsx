@@ -512,7 +512,7 @@ export default function ContaAzulPanel() {
                 <Plus className="h-4 w-4 mr-1.5" /> Faturar avulso
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-lg">
+            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle className="font-display">Faturar — Conta Azul</DialogTitle>
               </DialogHeader>
