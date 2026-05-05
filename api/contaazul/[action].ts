@@ -1229,67 +1229,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const retemInss = body.retem_inss !== undefined ? !!body.retem_inss : !!retencoesConfig?.retem_inss;
       const retemPisCofinsCsll = body.retem_pis_cofins_csll !== undefined ? !!body.retem_pis_cofins_csll : !!retencoesConfig?.retem_pis_cofins_csll;
 
-      const buildPayload = (numero: number) => {
-        // Calcula valores das retenções (alíquotas padrão — CA aceita ajustar)
-        const retencoes: any = {};
-        if (retemIss) {
-          retencoes.iss_retido = true;
-          retencoes.aliquota_iss = body.aliquota_iss ?? 5; // padrão 5%
-          retencoes.valor_iss_retido = +(valor * (body.aliquota_iss ?? 5) / 100).toFixed(2);
-        }
-        if (retemIr) {
-          retencoes.ir_retido = true;
-          retencoes.aliquota_ir = body.aliquota_ir ?? 1.5;
-          retencoes.valor_ir_retido = +(valor * (body.aliquota_ir ?? 1.5) / 100).toFixed(2);
-        }
-        if (retemInss) {
-          retencoes.inss_retido = true;
-          retencoes.aliquota_inss = body.aliquota_inss ?? 11;
-          retencoes.valor_inss_retido = +(valor * (body.aliquota_inss ?? 11) / 100).toFixed(2);
-        }
-        if (retemPisCofinsCsll) {
-          retencoes.pis_retido = true;
-          retencoes.cofins_retido = true;
-          retencoes.csll_retida = true;
-          retencoes.aliquota_pis = 0.65;
-          retencoes.aliquota_cofins = 3;
-          retencoes.aliquota_csll = 1;
-          retencoes.valor_pis_retido = +(valor * 0.65 / 100).toFixed(2);
-          retencoes.valor_cofins_retido = +(valor * 3 / 100).toFixed(2);
-          retencoes.valor_csll_retido = +(valor * 1 / 100).toFixed(2);
-        }
-        return {
-          id_cliente: personId,
-          numero,
-          data_venda: dataVenda,
-          situacao: "APROVADO",
-          observacoes: body.observacoes || undefined,
-          itens: [
+      const buildPayload = (numero: number) => ({
+        id_cliente: personId,
+        numero,
+        data_venda: dataVenda,
+        situacao: "APROVADO",
+        observacoes: body.observacoes || undefined,
+        itens: [
+          {
+            id: servicoId,
+            descricao: body.servico,
+            quantidade: 1,
+            valor,
+          },
+        ],
+        condicao_pagamento: {
+          opcao_condicao_pagamento: "À vista",
+          parcelas: [
             {
-              id: servicoId,
-              descricao: body.servico,
-              quantidade: 1,
+              numero_parcela: 1,
               valor,
+              data_vencimento: dataVenc,
+              descricao: body.servico,
+              forma_pagamento: "BOLETO_BANCARIO",
+              id_conta: contaRecebimentoId,
+              ...(categoriaId ? { id_categoria: categoriaId } : {}),
+              ...(centroCustoId ? { id_centro_de_custo: centroCustoId } : {}),
             },
           ],
-          condicao_pagamento: {
-            opcao_condicao_pagamento: "À vista",
-            parcelas: [
-              {
-                numero_parcela: 1,
-                valor,
-                data_vencimento: dataVenc,
-                descricao: body.servico,
-                forma_pagamento: "BOLETO_BANCARIO",
-                id_conta: contaRecebimentoId,
-                ...(categoriaId ? { id_categoria: categoriaId } : {}),
-                ...(centroCustoId ? { id_centro_de_custo: centroCustoId } : {}),
-              },
-            ],
-          },
-          ...(Object.keys(retencoes).length > 0 ? { retencoes } : {}),
-        };
-      };
+        },
+      });
+      // NOTA: retenção (retem_iss/ir/inss/pis_cofins_csll) está no banco
+      // mas o formato exato esperado pelo CA na criação de venda ainda
+      // não está confirmado. Por hora, retenção é aplicada DEPOIS via BFF
+      // ou manualmente no CA. Vamos descobrir o formato com 1 venda real
+      // antes de aplicar automático aqui.
+      void retemIss; void retemIr; void retemInss; void retemPisCofinsCsll;
 
       // Estratégia pra escolher próximo número da venda:
       // 1. Lê maior numero salvo no banco local (vendas criadas via MedX)
