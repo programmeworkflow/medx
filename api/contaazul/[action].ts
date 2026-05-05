@@ -23,6 +23,84 @@ import {
 // Garante que a pessoa na Conta Azul tem endereço completo (exigido pra NFS-e
 // pela maioria das prefeituras). Tenta puxar do registro local da empresa em
 // `empresas` e, se faltar, completa com BrasilAPI usando o CNPJ.
+// Busca CNPJ no Conta Azul e deduz retenções tributárias.
+// Heurística (validada com casos reais):
+//   - Órgão público     → SEMPRE retém ISS+IR+INSS+PIS/COFINS/CSLL
+//   - Pessoa Física     → não retém (consumidor final)
+//   - Optante Simples   → não retém (já paga DAS)
+//   - PJ não-Simples    → retém ISS na maioria dos municípios
+async function buscarRetencaoNoCA(cnpjOrCpf: string): Promise<{
+  retem_iss: boolean | null;
+  retem_ir: boolean;
+  retem_inss: boolean;
+  retem_pis_cofins_csll: boolean;
+  regime_tributario: string | null;
+  optante_simples: boolean | null;
+  orgao_publico: boolean;
+  fonte: "ca" | "nao_encontrado_ca";
+}> {
+  const digits = cnpjOrCpf.replace(/\D/g, "");
+  // 1. Procura no CA
+  let pessoa: any = null;
+  try {
+    const r = await caApi("GET", `/v1/pessoas?busca=${digits}&tamanho_pagina=5&pagina=1`);
+    const items: any[] = r?.itens || r?.items || [];
+    pessoa = items.find((p) => String(p?.documento || "").replace(/\D/g, "") === digits);
+  } catch {}
+
+  if (!pessoa) {
+    return {
+      retem_iss: null,
+      retem_ir: false,
+      retem_inss: false,
+      retem_pis_cofins_csll: false,
+      regime_tributario: null,
+      optante_simples: null,
+      orgao_publico: false,
+      fonte: "nao_encontrado_ca",
+    };
+  }
+
+  // 2. Pega detalhes (campos optante_simples_nacional, orgao_publico, etc)
+  let detalhes: any = pessoa;
+  try {
+    detalhes = await caApi("GET", `/v1/pessoas/${pessoa.id}`);
+  } catch {}
+
+  const optante = detalhes?.optante_simples_nacional === true;
+  const orgaoPub = detalhes?.orgao_publico === true;
+  const tipoPessoa = String(detalhes?.tipo_pessoa || "").toLowerCase();
+  const isPF = tipoPessoa.includes("física") || digits.length === 11;
+
+  // Heurística de retenção
+  let remIss = false, remIr = false, remInss = false, remPisCofins = false;
+  let regime = "lucro_presumido_ou_real";
+  if (orgaoPub) {
+    regime = "orgao_publico";
+    remIss = true; remIr = true; remInss = true; remPisCofins = true;
+  } else if (isPF) {
+    regime = "pessoa_fisica";
+    remIss = false;
+  } else if (optante) {
+    regime = "simples";
+    remIss = false;
+  } else {
+    regime = "lucro_presumido_ou_real";
+    remIss = true; // PJ não-Simples retém ISS na maioria dos municípios
+  }
+
+  return {
+    retem_iss: remIss,
+    retem_ir: remIr,
+    retem_inss: remInss,
+    retem_pis_cofins_csll: remPisCofins,
+    regime_tributario: regime,
+    optante_simples: optante,
+    orgao_publico: orgaoPub,
+    fonte: "ca",
+  };
+}
+
 async function garantirEnderecoPessoa(personId: string, cnpj: string) {
   const pessoa = await caApi("GET", `/v1/pessoas/${personId}`);
   const enderecoOk = (e: any) =>
@@ -460,6 +538,68 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .map((c: any) => ({ id: c.id || c.uuid, nome: c.nome || c.descricao, tipo: c.tipo }))
           .sort((a: any, b: any) => (a.nome || "").localeCompare(b.nome || "")),
       });
+    }
+
+    if (action === "buscar-retencao") {
+      // Single CNPJ — usado no cadastro novo de empresa
+      const cnpj = String(req.query.cnpj || "").replace(/\D/g, "");
+      if (!cnpj || (cnpj.length !== 14 && cnpj.length !== 11)) {
+        return res.status(400).json({ error: "cnpj/cpf inválido" });
+      }
+      const result = await buscarRetencaoNoCA(cnpj);
+      return res.status(200).json(result);
+    }
+
+    if (action === "sync-retencao") {
+      // Batch: processa empresas do Supabase, busca no CA, atualiza retenção.
+      // Use ?offset=0&limit=50 e itere até next_offset == null.
+      const offset = Number(req.query.offset || 0);
+      const limit = Math.min(Number(req.query.limit || 50), 100);
+      const sb = supaAdmin();
+
+      // Pega as empresas que precisam ser atualizadas (mais antigas primeiro)
+      const { data: empresas, error } = await sb
+        .from("empresas")
+        .select("id, cnpj, nome_empresa")
+        .order("retencao_atualizada_em", { ascending: true, nullsFirst: true })
+        .range(offset, offset + limit - 1);
+      if (error) return res.status(500).json({ error: error.message });
+
+      const stats = {
+        processadas: 0,
+        encontradas_ca: 0,
+        nao_encontradas: 0,
+        erros: [] as any[],
+      };
+
+      for (const empresa of empresas || []) {
+        try {
+          const cnpjDigits = String(empresa.cnpj || "").replace(/\D/g, "");
+          if (cnpjDigits.length !== 14 && cnpjDigits.length !== 11) {
+            continue;
+          }
+          const ret = await buscarRetencaoNoCA(cnpjDigits);
+          await sb.from("empresas").update({
+            retem_iss: ret.retem_iss,
+            retem_ir: ret.retem_ir,
+            retem_inss: ret.retem_inss,
+            retem_pis_cofins_csll: ret.retem_pis_cofins_csll,
+            regime_tributario: ret.regime_tributario,
+            optante_simples: ret.optante_simples,
+            orgao_publico: ret.orgao_publico,
+            retencao_atualizada_em: new Date().toISOString(),
+            retencao_fonte: ret.fonte,
+          }).eq("id", empresa.id);
+          stats.processadas++;
+          if (ret.fonte === "ca") stats.encontradas_ca++;
+          else stats.nao_encontradas++;
+        } catch (err: any) {
+          stats.erros.push({ cnpj: empresa.cnpj, erro: err?.message?.slice(0, 200) });
+        }
+      }
+
+      const nextOffset = (empresas?.length || 0) === limit ? offset + limit : null;
+      return res.status(200).json({ ok: true, offset, limit, ...stats, next_offset: nextOffset });
     }
 
     if (action === "fornecedores") {

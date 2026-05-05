@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Plus, Search, Upload, Download, CheckCircle2, AlertTriangle, Pencil, Trash2, Eye, MessageSquare, SlidersHorizontal, ChevronDown, X } from "lucide-react";
+import { Plus, Search, Upload, Download, CheckCircle2, AlertTriangle, Pencil, Trash2, Eye, MessageSquare, SlidersHorizontal, ChevronDown, X, RefreshCw } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { toast } from "sonner";
@@ -53,6 +53,8 @@ export default function Empresas() {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkDeleteRunning, setBulkDeleteRunning] = useState(false);
   const [bulkDeleteProgress, setBulkDeleteProgress] = useState({ ok: 0, fail: 0, errors: [] as string[] });
+  const [syncRetRunning, setSyncRetRunning] = useState(false);
+  const [syncRetProgress, setSyncRetProgress] = useState({ done: 0, total: 0, found: 0 });
 
   // Filters
   const [filterCategoria, setFilterCategoria] = useState<string>("all");
@@ -100,14 +102,39 @@ export default function Empresas() {
 
   const insertMutation = useMutation({
     mutationFn: insertEmpresa,
-    onSuccess: () => {
+    onSuccess: async (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["empresas"] });
       setOpen(false);
       resetForm();
       toast.success("✅ Empresa cadastrada com sucesso!", {
-        description: "Já está disponível na lista.",
+        description: "Buscando retenções no Conta Azul…",
         duration: 5000,
       });
+      // Em background: busca retenção no CA e atualiza
+      const cnpj = String(data?.cnpj || "").replace(/\D/g, "");
+      if (cnpj.length === 14 || cnpj.length === 11) {
+        try {
+          const r = await fetch(`https://medx-flow-mocha.vercel.app/api/contaazul/buscar-retencao?cnpj=${cnpj}`);
+          const ret = await r.json();
+          if (ret.fonte === "ca" && data?.id) {
+            await updateEmpresa(data.id, {
+              retem_iss: ret.retem_iss,
+              retem_ir: ret.retem_ir,
+              retem_inss: ret.retem_inss,
+              retem_pis_cofins_csll: ret.retem_pis_cofins_csll,
+              regime_tributario: ret.regime_tributario,
+              optante_simples: ret.optante_simples,
+              orgao_publico: ret.orgao_publico,
+              retencao_atualizada_em: new Date().toISOString(),
+              retencao_fonte: "ca",
+            } as any);
+            queryClient.invalidateQueries({ queryKey: ["empresas"] });
+            toast.success(`Retenções atualizadas: ${ret.regime_tributario}${ret.retem_iss ? " · retém ISS" : " · não retém ISS"}`, { duration: 4000 });
+          }
+        } catch (err) {
+          console.warn("Falha ao buscar retenção:", err);
+        }
+      }
     },
     onError: (err: any) => {
       toast.error(err.message?.includes("duplicate") ? "CNPJ já cadastrado." : "Erro ao cadastrar empresa.");
@@ -426,6 +453,40 @@ export default function Empresas() {
             }}
           >
             <AlertTriangle className="h-4 w-4 mr-2" /> Encontrar duplicatas
+          </Button>
+          <Button
+            variant="outline"
+            disabled={syncRetRunning}
+            onClick={async () => {
+              setSyncRetRunning(true);
+              setSyncRetProgress({ done: 0, total: empresas.length, found: 0 });
+              try {
+                let offset = 0;
+                let totalDone = 0;
+                let totalFound = 0;
+                while (true) {
+                  const r = await fetch(`https://medx-flow-mocha.vercel.app/api/contaazul/sync-retencao?offset=${offset}&limit=50`);
+                  const j = await r.json();
+                  if (!j.ok) throw new Error(j.error || "erro");
+                  totalDone += j.processadas || 0;
+                  totalFound += j.encontradas_ca || 0;
+                  setSyncRetProgress({ done: totalDone, total: empresas.length, found: totalFound });
+                  if (j.next_offset == null) break;
+                  offset = j.next_offset;
+                }
+                queryClient.invalidateQueries({ queryKey: ["empresas"] });
+                toast.success(`✅ Retenções atualizadas — ${totalFound}/${totalDone} encontradas no CA`, { duration: 6000 });
+              } catch (err: any) {
+                toast.error("Erro: " + (err?.message || "falha ao sincronizar"));
+              } finally {
+                setSyncRetRunning(false);
+              }
+            }}
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${syncRetRunning ? "animate-spin" : ""}`} />
+            {syncRetRunning
+              ? `Atualizando ${syncRetProgress.done}/${syncRetProgress.total}…`
+              : "Atualizar retenções (do CA)"}
           </Button>
           <Dialog open={uploadOpen} onOpenChange={(v) => { setUploadOpen(v); if (!v) setUploadResult(null); }}>
             <DialogTrigger asChild>
