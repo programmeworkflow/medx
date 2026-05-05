@@ -45,6 +45,9 @@ export default function Empresas() {
   const [uploadResult, setUploadResult] = useState<{ success: number; atualizadas: number; errors: string[] } | null>(null);
   const [dupesOpen, setDupesOpen] = useState(false);
   const [duplicates, setDuplicates] = useState<[string, any[]][]>([]);
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState({ ok: 0, fail: 0, errors: [] as string[] });
 
   // Filters
   const [filterCategoria, setFilterCategoria] = useState<string>("all");
@@ -915,36 +918,10 @@ export default function Empresas() {
                   <Button
                     variant="destructive"
                     size="sm"
-                    onClick={async () => {
-                      const confirmed = await confirmDialog({
-                        title: `Excluir ${totalDupes} duplicata${totalDupes > 1 ? "s" : ""}?`,
-                        description: "Mantém a 1ª empresa de cada grupo de CNPJ duplicado e remove as demais. Esta ação não pode ser desfeita.",
-                        confirmText: `Excluir ${totalDupes}`,
-                        cancelText: "Cancelar",
-                        variant: "danger",
-                      });
-                      if (!confirmed) return;
-                      const toDelete = duplicates.flatMap(([, arr]) => arr.slice(1));
-                      let ok = 0, fail = 0;
-                      for (const e of toDelete) {
-                        try {
-                          await deleteEmpresa(e.id);
-                          ok++;
-                        } catch {
-                          fail++;
-                        }
-                      }
-                      queryClient.invalidateQueries({ queryKey: ["empresas"] });
-                      setDuplicates([]);
-                      setDupesOpen(false);
-                      if (fail === 0) {
-                        toast.success(`✅ ${ok} duplicata${ok > 1 ? "s" : ""} excluída${ok > 1 ? "s" : ""}!`, { duration: 6000 });
-                      } else {
-                        toast.warning(`${ok} excluída(s) · ${fail} falhou (provável faturamento vinculado)`, { duration: 8000 });
-                      }
-                    }}
+                    disabled={bulkDeleting}
+                    onClick={() => setBulkConfirmOpen(true)}
                   >
-                    Excluir todas
+                    {bulkDeleting ? `Excluindo... ${bulkProgress.ok + bulkProgress.fail}/${totalDupes}` : "Excluir todas"}
                   </Button>
                 </div>
               );
@@ -1000,6 +977,82 @@ export default function Empresas() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Confirm bulk delete — AlertDialog inline (mesmo escopo, sem portal aninhado) */}
+      <AlertDialog open={bulkConfirmOpen} onOpenChange={setBulkConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Excluir {duplicates.reduce((s, [, arr]) => s + (arr.length - 1), 0)} duplicata
+              {duplicates.reduce((s, [, arr]) => s + (arr.length - 1), 0) > 1 ? "s" : ""}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Mantém a 1ª empresa de cada grupo de CNPJ duplicado e remove as demais.
+              Esta ação não pode ser desfeita.
+              <br /><br />
+              <strong className="text-destructive">Atenção:</strong> empresas com faturamentos vinculados não serão excluídas (FK constraint).
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={bulkDeleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={bulkDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async (ev) => {
+                ev.preventDefault(); // não fecha automaticamente
+                setBulkDeleting(true);
+                setBulkProgress({ ok: 0, fail: 0, errors: [] });
+                const toDelete = duplicates.flatMap(([, arr]) => arr.slice(1));
+                let ok = 0, fail = 0;
+                const errors: string[] = [];
+                for (const e of toDelete) {
+                  try {
+                    await deleteEmpresa(e.id);
+                    ok++;
+                  } catch (err: any) {
+                    fail++;
+                    errors.push(`${e.nome_empresa}: ${err?.message || "erro desconhecido"}`);
+                    console.error("Falha ao excluir", e.nome_empresa, err);
+                  }
+                  setBulkProgress({ ok, fail, errors });
+                }
+                queryClient.invalidateQueries({ queryKey: ["empresas"] });
+                setBulkConfirmOpen(false);
+                setBulkDeleting(false);
+                if (fail === 0) {
+                  toast.success(`✅ ${ok} duplicata${ok > 1 ? "s" : ""} excluída${ok > 1 ? "s" : ""}!`, { duration: 6000 });
+                  setDuplicates([]);
+                  setDupesOpen(false);
+                } else {
+                  toast.warning(
+                    `${ok} excluída(s) · ${fail} falhou`,
+                    {
+                      description: `Ver detalhes nos logs do navegador (F12). Provável: faturamento vinculado.`,
+                      duration: 10000,
+                    }
+                  );
+                  // Re-detecta duplicatas restantes após exclusões parciais
+                  if (ok > 0) {
+                    const groups = new Map<string, typeof empresas>();
+                    for (const e of empresas) {
+                      const k = onlyDigits(e.cnpj);
+                      const arr = groups.get(k) || [];
+                      arr.push(e);
+                      groups.set(k, arr);
+                    }
+                    const dupes = Array.from(groups.entries()).filter(([, arr]) => arr.length > 1);
+                    setDuplicates(dupes as [string, any[]][]);
+                  }
+                }
+              }}
+            >
+              {bulkDeleting
+                ? `Excluindo ${bulkProgress.ok + bulkProgress.fail}/${duplicates.reduce((s, [, arr]) => s + (arr.length - 1), 0)}…`
+                : "Excluir todas"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
