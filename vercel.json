@@ -26,6 +26,10 @@
     {
       "path": "/api/contaazul/health-check",
       "schedule": "7 11 * * 1"
+    },
+    {
+      "path": "/api/contaazul/reset-retencao?apenas_indefinidas=1",
+      "schedule": "0 11 1 * *"
     }
   ]
 }
