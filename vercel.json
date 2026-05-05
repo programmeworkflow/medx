@@ -4,6 +4,7 @@
   ],
   "functions": {
     "api/esocial/sync.ts": { "maxDuration": 60 },
+    "api/esocial/sync-next.ts": { "maxDuration": 60 },
     "api/eso/[action].ts": { "maxDuration": 60 }
   },
   "crons": [
@@ -12,8 +13,8 @@
       "schedule": "0 5 * * *"
     },
     {
-      "path": "/api/esocial/sync",
-      "schedule": "0 6 * * *"
+      "path": "/api/esocial/sync-next",
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/contaazul/refresh-session",
