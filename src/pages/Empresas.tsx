@@ -338,9 +338,16 @@ export default function Empresas() {
         await insertEmpresasBulk(validEmpresas);
       }
       // Aplica updates de categoria pra empresas já existentes
+      let updateFails = 0;
       for (const u of updates) {
-        try { await updateEmpresa(u.id, { categoria: u.categoria }); } catch {}
+        try {
+          await updateEmpresa(u.id, { categoria: u.categoria });
+        } catch (err: any) {
+          updateFails++;
+          errors.push(`Update falhou para "${u.nome}": ${err?.message || "erro"}`);
+        }
       }
+      if (updateFails > 0) console.error(`${updateFails} updates de categoria falharam`);
       if (validEmpresas.length > 0 || updates.length > 0) {
         queryClient.invalidateQueries({ queryKey: ["empresas"] });
       }
@@ -366,6 +373,28 @@ export default function Empresas() {
         <div>
           <h1 className="font-display text-[1.75rem] font-bold tracking-tight">Empresas</h1>
           <p className="text-sm text-muted-foreground">{empresas.length} cadastradas</p>
+          {(() => {
+            const counts = empresas.reduce((acc, e) => {
+              acc[e.categoria] = (acc[e.categoria] || 0) + 1;
+              return acc;
+            }, {} as Record<string, number>);
+            const ordered = categorias.filter(c => counts[c] > 0);
+            if (ordered.length === 0) return null;
+            return (
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {ordered.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => { setFilterCategoria(c); setCurrentPage(0); }}
+                    className="text-xs px-2 py-0.5 rounded bg-muted hover:bg-muted/70 text-muted-foreground hover:text-foreground transition-colors"
+                    title={`Filtrar por ${CATEGORIA_LABELS[c]}`}
+                  >
+                    {CATEGORIA_LABELS[c]}: <span className="font-semibold text-foreground">{counts[c]}</span>
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
         </div>
         <div className="flex gap-2">
           <Button
