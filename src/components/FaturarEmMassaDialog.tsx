@@ -169,10 +169,28 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
       .map((f) => {
         const empresa = empresasById.get(f.empresa_executora_id) as any;
         const semCadastro = f.status === "sem_cadastro";
-        const retPadrao: RetencaoPadrao = semCadastro
-          ? "nenhuma"
-          : (empresa?.retencao_padrao as RetencaoPadrao) ||
-            (empresa?.categoria === "credenciada" ? "credenciada_auto" : "nenhuma");
+        // 1. Se já tem retencao_padrao configurada manualmente, usa essa.
+        // 2. Senão deduz dos campos novos (retem_iss/ir/inss/pis_cofins_csll
+        //    sincronizados da Receita Federal).
+        // 3. Fallback: credenciada → automático, demais → nenhuma.
+        const padraoSalvo = empresa?.retencao_padrao as RetencaoPadrao | undefined;
+        let retPadrao: RetencaoPadrao;
+        if (semCadastro) {
+          retPadrao = "nenhuma";
+        } else if (padraoSalvo && padraoSalvo !== "nenhuma") {
+          retPadrao = padraoSalvo;
+        } else {
+          const remIss = empresa?.retem_iss === true;
+          const remFed =
+            empresa?.retem_ir === true ||
+            empresa?.retem_inss === true ||
+            empresa?.retem_pis_cofins_csll === true;
+          if (remIss && remFed) retPadrao = "federal_iss";
+          else if (remIss) retPadrao = "iss";
+          else if (remFed) retPadrao = "federal";
+          else if (empresa?.categoria === "credenciada") retPadrao = "credenciada_auto";
+          else retPadrao = "nenhuma";
+        }
         const modoSalvo = empresa?.nf_modo as string | undefined;
         const nfModo: NfModo =
           modoSalvo === "nao_emite" || modoSalvo === "automatica" || modoSalvo === "manual"
