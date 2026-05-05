@@ -23,20 +23,22 @@ export default async function handler(_req: VercelRequest, res: VercelResponse) 
     backend.ms = Date.now() - t0;
   }
 
-  // 2. A cada 30 min (minuto 0-2 ou 30-32 — janela de tolerância de 3min)
-  // dispara sync eSocial em background (não esperamos a resposta)
-  if (minute < 3 || (minute >= 30 && minute < 33)) {
-    syncTriggered = true;
-    // Fire-and-forget — não usamos await
-    fetch("https://medx-flow-mocha.vercel.app/api/esocial/sync?next=1", {
-      method: "GET",
-    }).catch(() => {});
+  // 2. Disparos em background (fire-and-forget):
+  //   - minuto 0-2:   sync eSocial (consulta governo, 1 empresa)
+  //   - minuto 30-32: sync-workers-cursor (popula CPFs do ESO, 40 empresas)
+  let triggered: string[] = [];
+  if (minute < 3) {
+    triggered.push("esocial-sync");
+    fetch("https://medx-flow-mocha.vercel.app/api/esocial/sync?next=1", { method: "GET" }).catch(() => {});
+  } else if (minute >= 30 && minute < 33) {
+    triggered.push("eso-workers-cursor");
+    fetch("https://medx-flow-mocha.vercel.app/api/eso/sync-workers-cursor?limit=40", { method: "GET" }).catch(() => {});
   }
 
   return res.status(200).json({
     ok: true,
     backend,
-    sync_triggered: syncTriggered,
+    triggered,
     minute,
     at: now.toISOString(),
   });
