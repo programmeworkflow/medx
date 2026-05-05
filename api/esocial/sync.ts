@@ -46,11 +46,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 2. Busca empresa(s)
     let empresas: any[] | null = null;
     if (isNext && !empresaId) {
-      // Modo chunked: 1 empresa por execução (a mais antiga)
+      // Modo chunked: pega CNPJs que TÊM CPFs cadastrados, depois empresa
+      // ativa mais antiga dentre essas.
+      const { data: funcs } = await sb
+        .from("esocial_funcionarios")
+        .select("empresa_cnpj");
+      const cnpjsComCpf = Array.from(new Set((funcs || []).map((r: any) => r.empresa_cnpj)));
+      if (cnpjsComCpf.length === 0) {
+        return res.status(200).json({
+          ok: true, skipped: true,
+          reason: "Nenhum CPF cadastrado em esocial_funcionarios — rode /api/eso/sync-workers-cursor primeiro",
+        });
+      }
       const { data, error } = await sb
         .from("esocial_empresas_sync")
         .select("*")
         .eq("ativo", true)
+        .in("cnpj", cnpjsComCpf)
         .order("ultimo_sync", { ascending: true, nullsFirst: true })
         .limit(1);
       if (error) throw error;
