@@ -60,9 +60,42 @@ async function carregarPessoasCAIndexadas(): Promise<Map<string, any>> {
   return map;
 }
 
-// Pega detalhes da pessoa (optante_simples_nacional, orgao_publico) e
-// aplica heurística de retenção. Use isso depois de já ter o ca_id pelo map.
-async function buscarRetencaoPorPessoaId(caPessoaId: string): Promise<{
+// Consulta BrasilAPI (Receita Federal) — fonte CONFIÁVEL de regime tributário.
+// Free tier: ~5 req/s sem auth.
+async function buscarBrasilAPI(cnpj: string): Promise<{
+  optante_simples: boolean | null;
+  optante_mei: boolean | null;
+  porte: string | null;
+  situacao: string | null;
+  found: boolean;
+} | null> {
+  if (cnpj.length !== 14) return null; // só consulta CNPJ
+  try {
+    const r = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (r.status === 404) {
+      return { optante_simples: null, optante_mei: null, porte: null, situacao: null, found: false };
+    }
+    if (!r.ok) return null;
+    const j: any = await r.json();
+    return {
+      optante_simples: j?.opcao_pelo_simples === true,
+      optante_mei: j?.opcao_pelo_mei === true,
+      porte: j?.porte || null,
+      situacao: j?.descricao_situacao_cadastral || null,
+      found: true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Resolve retenção tributária cruzando CA (orgão público) + BrasilAPI (regime real).
+async function buscarRetencaoCompleta(
+  cnpjOrCpf: string,
+  caPessoa: any | null
+): Promise<{
   retem_iss: boolean | null;
   retem_ir: boolean;
   retem_inss: boolean;
@@ -70,45 +103,78 @@ async function buscarRetencaoPorPessoaId(caPessoaId: string): Promise<{
   regime_tributario: string | null;
   optante_simples: boolean | null;
   orgao_publico: boolean;
-  fonte: "ca";
+  fonte: string;
 }> {
-  let detalhes: any = {};
-  try {
-    detalhes = await caApi("GET", `/v1/pessoas/${caPessoaId}`);
-  } catch {}
+  const digits = cnpjOrCpf.replace(/\D/g, "");
+  const isPF = digits.length === 11;
 
-  const optante = detalhes?.optante_simples_nacional === true;
-  const orgaoPub = detalhes?.orgao_publico === true;
-  const tipoPessoa = String(detalhes?.tipo_pessoa || "").toLowerCase();
-  const docDigits = String(detalhes?.documento || "").replace(/\D/g, "");
-  const isPF = tipoPessoa.includes("física") || docDigits.length === 11;
+  // 1. BrasilAPI (fonte de regime real) — só pra PJ
+  let optanteSimples: boolean | null = null;
+  let optanteMei = false;
+  let braFonte = false;
+  if (!isPF) {
+    const bra = await buscarBrasilAPI(digits);
+    if (bra?.found) {
+      optanteSimples = bra.optante_simples;
+      optanteMei = bra.optante_mei === true;
+      braFonte = true;
+    }
+  }
 
-  // Heurística de retenção
+  // 2. CA detalhe (pra orgao_publico — BrasilAPI não tem isso)
+  let orgaoPub = false;
+  let caFonte = false;
+  if (caPessoa?.id) {
+    try {
+      const detalhes = await caApi("GET", `/v1/pessoas/${caPessoa.id}`);
+      orgaoPub = detalhes?.orgao_publico === true;
+      caFonte = true;
+      // Fallback: se BrasilAPI não respondeu, usa CA (menos confiável)
+      if (optanteSimples === null && !braFonte) {
+        optanteSimples = detalhes?.optante_simples_nacional === true ? true : null;
+      }
+    } catch {}
+  }
+
+  // 3. Heurística de retenção
   let remIss = false, remIr = false, remInss = false, remPisCofins = false;
-  let regime = "lucro_presumido_ou_real";
+  let regime: string;
   if (orgaoPub) {
     regime = "orgao_publico";
     remIss = true; remIr = true; remInss = true; remPisCofins = true;
   } else if (isPF) {
     regime = "pessoa_fisica";
     remIss = false;
-  } else if (optante) {
+  } else if (optanteMei) {
+    regime = "mei";
+    remIss = false;
+  } else if (optanteSimples === true) {
     regime = "simples";
     remIss = false;
-  } else {
+  } else if (optanteSimples === false) {
     regime = "lucro_presumido_ou_real";
     remIss = true;
+  } else {
+    // BrasilAPI não respondeu e CA não tinha dado → indefinido
+    regime = "indefinido";
   }
 
+  // Fonte (auditoria)
+  let fonte: string;
+  if (braFonte && caFonte) fonte = "brasilapi+ca";
+  else if (braFonte) fonte = "brasilapi";
+  else if (caFonte) fonte = "ca";
+  else fonte = "nao_encontrado";
+
   return {
-    retem_iss: remIss,
+    retem_iss: regime === "indefinido" ? null : remIss,
     retem_ir: remIr,
     retem_inss: remInss,
     retem_pis_cofins_csll: remPisCofins,
     regime_tributario: regime,
-    optante_simples: optante,
+    optante_simples: optanteSimples,
     orgao_publico: orgaoPub,
-    fonte: "ca",
+    fonte,
   };
 }
 
@@ -557,17 +623,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!cnpj || (cnpj.length !== 14 && cnpj.length !== 11)) {
         return res.status(400).json({ error: "cnpj/cpf inválido" });
       }
-      // Carrega lista CA, busca no map (CA não tem busca server-side por documento)
-      const map = await carregarPessoasCAIndexadas();
-      const pessoa = map.get(cnpj);
-      if (!pessoa) {
-        return res.status(200).json({
-          retem_iss: null, retem_ir: false, retem_inss: false, retem_pis_cofins_csll: false,
-          regime_tributario: null, optante_simples: null, orgao_publico: false,
-          fonte: "nao_encontrado_ca",
-        });
-      }
-      const result = await buscarRetencaoPorPessoaId(pessoa.id);
+      // Tenta achar no CA pelo cache; mesmo se não achar, BrasilAPI já basta
+      let pessoa: any = null;
+      try {
+        const map = await carregarPessoasCAIndexadas();
+        pessoa = map.get(cnpj) || null;
+      } catch {}
+      const result = await buscarRetencaoCompleta(cnpj, pessoa);
       return res.status(200).json(result);
     }
 
@@ -592,25 +654,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const stats = { processadas: 0, encontradas_ca: 0, nao_encontradas: 0, erros: [] as any[] };
 
-      // 3. Processa em paralelo (5 simultâneos pra não estressar CA)
+      // 3. Processa em paralelo (3 simultâneos — BrasilAPI tem rate limit ~5 req/s)
       const tasks = (empresas || []).map((empresa: any) => async () => {
         try {
           const cnpjDigits = String(empresa.cnpj || "").replace(/\D/g, "");
           if (cnpjDigits.length !== 14 && cnpjDigits.length !== 11) return;
 
-          const pessoa = map.get(cnpjDigits);
-          let ret;
-          if (!pessoa) {
-            ret = {
-              retem_iss: null, retem_ir: false, retem_inss: false, retem_pis_cofins_csll: false,
-              regime_tributario: null, optante_simples: null, orgao_publico: false,
-              fonte: "nao_encontrado_ca" as const,
-            };
-            stats.nao_encontradas++;
-          } else {
-            ret = await buscarRetencaoPorPessoaId(pessoa.id);
-            stats.encontradas_ca++;
-          }
+          const pessoa = map.get(cnpjDigits) || null;
+          const ret = await buscarRetencaoCompleta(cnpjDigits, pessoa);
+
           await sb.from("empresas").update({
             retem_iss: ret.retem_iss,
             retem_ir: ret.retem_ir,
@@ -622,15 +674,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             retencao_atualizada_em: new Date().toISOString(),
             retencao_fonte: ret.fonte,
           }).eq("id", empresa.id);
+
           stats.processadas++;
+          if (ret.fonte.includes("brasilapi")) stats.encontradas_ca++;
+          else stats.nao_encontradas++;
         } catch (err: any) {
           stats.erros.push({ cnpj: empresa.cnpj, erro: err?.message?.slice(0, 200) });
         }
       });
 
-      // Roda em batches de 5
-      for (let i = 0; i < tasks.length; i += 5) {
-        await Promise.all(tasks.slice(i, i + 5).map((t) => t()));
+      // Roda em batches de 3 (BrasilAPI rate limit)
+      for (let i = 0; i < tasks.length; i += 3) {
+        await Promise.all(tasks.slice(i, i + 3).map((t) => t()));
       }
 
       const nextOffset = (empresas?.length || 0) === limit ? offset + limit : null;
@@ -923,6 +978,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         expires_in_seconds: Math.floor(expMs / 1000),
         expired: expMs < 0,
       });
+    }
+
+    if (action === "reset-retencao") {
+      // Reseta retencao_atualizada_em → todas voltam pra fila do sync
+      const sb = supaAdmin();
+      const { error, count } = await sb
+        .from("empresas")
+        .update({ retencao_atualizada_em: null }, { count: "exact" })
+        .not("id", "is", null);
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json({ ok: true, resetadas: count });
     }
 
     if (action === "retencao-stats") {
