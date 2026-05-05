@@ -79,6 +79,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .eq("empresa_cnpj", cnpj14);
       if (!cpfs?.length) {
         stats.erros.push({ cnpj: cnpj14, erro: "Sem CPFs cadastrados — importe lista primeiro" });
+        // Atualiza ultimo_sync mesmo sem CPFs pra rotacionar pra próxima empresa
+        await sb.from("esocial_empresas_sync")
+          .update({ ultimo_sync: new Date().toISOString() })
+          .eq("id", empresa.id);
         continue;
       }
 
