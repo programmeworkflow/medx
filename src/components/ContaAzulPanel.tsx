@@ -75,6 +75,8 @@ export default function ContaAzulPanel() {
   const [obs, setObs] = useState("");
   const [emitirNF, setEmitirNF] = useState(false);
   const [emitirBoleto, setEmitirBoleto] = useState(false);
+  const [enviarEmail, setEnviarEmail] = useState(false);
+  const [emailDestinatarios, setEmailDestinatarios] = useState("");
   // Cache de rótulos amigáveis (servicoId → rotulo) — evita chamada repetida da IA
   const [rotuloCache, setRotuloCache] = useState<Record<string, string>>({});
 
@@ -285,11 +287,10 @@ export default function ContaAzulPanel() {
     if (!empresa) return toast.error("Selecione uma empresa");
     if (!servicoId) return toast.error("Selecione o serviço");
     if (!valor) return toast.error("Informe o valor");
-    const empresaCC = (empresa as any).centro_custo_id;
-    const ccFinal = centroCustoOverride || empresaCC;
+    const ccFinal = (empresa as any).centro_custo_id;
     if (!ccFinal) {
       return toast.error(
-        `Empresa "${empresa.nome_empresa}" sem centro de custo. Selecione um centro de custo abaixo ou cadastre em Cadastros → Empresas.`
+        `Empresa "${empresa.nome_empresa}" sem centro de custo. Cadastre em Cadastros → Empresas.`
       );
     }
     const rotulo =
@@ -326,11 +327,33 @@ export default function ContaAzulPanel() {
       else if (j?.nf?.status === "erro") partes.push(`NF erro: ${j.nf.erro || "?"}`);
       if (j?.boleto?.status === "solicitado") partes.push("boleto gerado");
       else if (j?.boleto?.status === "erro") partes.push(`boleto erro: ${j.boleto.erro || "?"}`);
+
+      // Envia e-mail se solicitado
+      if (enviarEmail && j?.venda_id) {
+        try {
+          const dest = emailDestinatarios.split(",").map((s) => s.trim()).filter((s) => s.includes("@"));
+          const re = await fetch(`${API_BASE}/api/contaazul/send-email-venda`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              venda_id: j.venda_id,
+              destinatarios: dest.length > 0 ? dest : undefined,
+            }),
+          });
+          const rj = await re.json();
+          if (re.ok && rj.ok) partes.push("e-mail enviado");
+          else partes.push(`e-mail erro: ${rj.error?.slice(0, 60) || "?"}`);
+        } catch (err: any) {
+          partes.push(`e-mail erro: ${err?.message?.slice(0, 60)}`);
+        }
+      }
+
       toast.success(partes.join(" — "));
       setOpen(false);
       setServicoId(""); setValor(""); setObs("");
       setCategoriaId(""); setCentroCustoOverride("");
       setEmitirNF(false); setEmitirBoleto(false);
+      setEnviarEmail(false); setEmailDestinatarios("");
     } catch (e: any) {
       toast.error(`${e?.message}`);
     } finally {
@@ -582,34 +605,43 @@ export default function ContaAzulPanel() {
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Categoria financeira</Label>
-                    <Select value={categoriaId} onValueChange={setCategoriaId}>
-                      <SelectTrigger>
-                        <SelectValue placeholder={categorias.length ? "Selecionar..." : "Carregando..."} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {categorias.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Centro de custo (override)</Label>
-                    <Select value={centroCustoOverride} onValueChange={setCentroCustoOverride}>
-                      <SelectTrigger>
-                        <SelectValue placeholder={centros.length ? "(usar do cadastro)" : "Carregando..."} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {centros.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                <div className="space-y-2">
+                  <Label>Categoria financeira</Label>
+                  <Select value={categoriaId} onValueChange={setCategoriaId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={categorias.length ? "Selecionar..." : "Carregando..."} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {categorias.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
+                {empresaSelecionada && (() => {
+                  const e: any = empresaSelecionada;
+                  const remIss = e.retem_iss === true;
+                  const remFed = e.retem_ir || e.retem_inss || e.retem_pis_cofins_csll;
+                  const regime = e.regime_tributario || "—";
+                  const status = remIss && remFed ? "Federal + ISS"
+                    : remIss ? "Só ISS"
+                    : remFed ? "Só Federal"
+                    : "Nenhuma";
+                  const cor = (remIss || remFed) ? "text-success" : "text-muted-foreground";
+                  return (
+                    <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Retenção (do cadastro):</span>
+                        <span className={`font-semibold ${cor}`}>{status}</span>
+                      </div>
+                      <div className="text-muted-foreground">
+                        Regime: <span className="text-foreground">{regime}</span>
+                        {e.retencao_fonte === "manual" && " · 🔒 manual"}
+                        {e.retencao_fonte && e.retencao_fonte !== "manual" && ` · 🤖 sync`}
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <Label>Observações da NF</Label>
@@ -696,6 +728,32 @@ export default function ContaAzulPanel() {
                     <div className="text-xs text-muted-foreground">
                       Emite boleto pela conta Receba Fácil cadastrada na Conta Azul.
                     </div>
+                  </div>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer p-3 rounded-lg border border-border hover:border-primary/50 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={enviarEmail}
+                    onChange={(e) => setEnviarEmail(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <div className="flex-1 space-y-2">
+                    <div>
+                      <div className="text-sm font-medium">Enviar e-mail ao cliente</div>
+                      <div className="text-xs text-muted-foreground">
+                        Após emitir, manda NF + boleto pro e-mail abaixo (ou do cadastro do cliente no CA).
+                      </div>
+                    </div>
+                    {enviarEmail && (
+                      <Input
+                        type="text"
+                        placeholder="email@empresa.com (separe múltiplos por vírgula — opcional)"
+                        value={emailDestinatarios}
+                        onChange={(ev) => setEmailDestinatarios(ev.target.value)}
+                        className="h-8 text-xs"
+                        onClick={(ev) => ev.stopPropagation()}
+                      />
+                    )}
                   </div>
                 </label>
                 <Button
