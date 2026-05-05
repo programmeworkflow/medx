@@ -22,6 +22,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const empresaId: string | undefined = req.body?.id;
+    // Modo chunked: pega só 1 empresa (a com ultimo_sync mais antigo) e
+    // sincroniza ela. Cabe em <60s — usado pelo cron + UptimeRobot.
+    const isNext = req.query.next === "1" || req.query.mode === "next";
     const sb = supaAdmin();
 
     // 1. Carrega cert ativo
@@ -41,12 +44,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const agent = makeAgent(pfxBuf, senha);
 
     // 2. Busca empresa(s)
-    const empresasQ = sb.from("esocial_empresas_sync").select("*").eq("ativo", true);
-    if (empresaId) empresasQ.eq("id", empresaId);
-    const { data: empresas, error: emprErr } = await empresasQ;
-    if (emprErr) throw emprErr;
+    let empresas: any[] | null = null;
+    if (isNext && !empresaId) {
+      // Modo chunked: 1 empresa por execução (a mais antiga)
+      const { data, error } = await sb
+        .from("esocial_empresas_sync")
+        .select("*")
+        .eq("ativo", true)
+        .order("ultimo_sync", { ascending: true, nullsFirst: true })
+        .limit(1);
+      if (error) throw error;
+      empresas = data;
+    } else {
+      const empresasQ = sb.from("esocial_empresas_sync").select("*").eq("ativo", true);
+      if (empresaId) empresasQ.eq("id", empresaId);
+      const { data, error } = await empresasQ;
+      if (error) throw error;
+      empresas = data;
+    }
     if (!empresas?.length) {
-      return res.status(400).json({ error: "Nenhuma empresa configurada para sync" });
+      return res.status(200).json({ ok: true, skipped: true, reason: "Nenhuma empresa ativa pra sync" });
     }
 
     const stats: any = { empresas: empresas.length, cpfsConsultados: 0, idsRetornados: 0, eventosBaixados: 0, atualizacoes: 0, erros: [] as any[] };

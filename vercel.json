@@ -4,7 +4,6 @@
   ],
   "functions": {
     "api/esocial/sync.ts": { "maxDuration": 60 },
-    "api/esocial/sync-next.ts": { "maxDuration": 60 },
     "api/eso/[action].ts": { "maxDuration": 60 }
   },
   "crons": [
@@ -13,7 +12,7 @@
       "schedule": "0 5 * * *"
     },
     {
-      "path": "/api/esocial/sync-next",
+      "path": "/api/esocial/sync?next=1",
       "schedule": "0 6 * * *"
     },
     {
