@@ -14,7 +14,7 @@
     },
     {
       "path": "/api/esocial/sync-next",
-      "schedule": "0 * * * *"
+      "schedule": "0 6 * * *"
     },
     {
       "path": "/api/contaazul/refresh-session",
