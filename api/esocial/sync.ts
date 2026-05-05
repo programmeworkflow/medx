@@ -15,7 +15,10 @@ import {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   Object.entries(corsHeaders).forEach(([k, v]) => res.setHeader(k, v));
   if (req.method === "OPTIONS") return res.status(204).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  // Aceita GET (Vercel Cron) e POST (chamada manual com body)
+  if (req.method !== "POST" && req.method !== "GET") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
 
   try {
     const empresaId: string | undefined = req.body?.id;
