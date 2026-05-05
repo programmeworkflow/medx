@@ -868,8 +868,50 @@ export default function Empresas() {
           </DialogHeader>
           <div className="space-y-3 mt-2">
             <p className="text-sm text-muted-foreground">
-              Empresas com o mesmo CNPJ. Mantenha apenas 1 de cada — clique em "Excluir" nas duplicatas que quer remover.
+              Empresas com o mesmo CNPJ. A primeira de cada grupo fica marcada como "manter" — as demais são duplicatas.
             </p>
+            {duplicates.length > 0 && (() => {
+              const totalDupes = duplicates.reduce((s, [, arr]) => s + (arr.length - 1), 0);
+              return (
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-destructive">
+                      {totalDupes} duplicata{totalDupes > 1 ? "s" : ""} pra excluir
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Mantém a 1ª empresa de cada grupo, exclui as demais.
+                    </p>
+                  </div>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={async () => {
+                      if (!confirm(`Excluir ${totalDupes} duplicata${totalDupes > 1 ? "s" : ""}? Essa ação não pode ser desfeita.`)) return;
+                      const toDelete = duplicates.flatMap(([, arr]) => arr.slice(1));
+                      let ok = 0, fail = 0;
+                      for (const e of toDelete) {
+                        try {
+                          await deleteEmpresa(e.id);
+                          ok++;
+                        } catch {
+                          fail++;
+                        }
+                      }
+                      queryClient.invalidateQueries({ queryKey: ["empresas"] });
+                      setDuplicates([]);
+                      setDupesOpen(false);
+                      if (fail === 0) {
+                        toast.success(`✅ ${ok} duplicata${ok > 1 ? "s" : ""} excluída${ok > 1 ? "s" : ""}!`, { duration: 6000 });
+                      } else {
+                        toast.warning(`${ok} excluída(s) · ${fail} falhou (provável faturamento vinculado)`, { duration: 8000 });
+                      }
+                    }}
+                  >
+                    Excluir todas
+                  </Button>
+                </div>
+              );
+            })()}
             {duplicates.map(([cnpj, arr]) => (
               <div key={cnpj} className="rounded-lg border border-border p-3 space-y-2">
                 <p className="text-xs font-mono text-muted-foreground">CNPJ: {cnpj}</p>
