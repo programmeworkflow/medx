@@ -60,8 +60,8 @@ async function carregarPessoasCAIndexadas(): Promise<Map<string, any>> {
   return map;
 }
 
-// Consulta BrasilAPI (Receita Federal) — fonte CONFIÁVEL de regime tributário.
-// Free tier: ~5 req/s sem auth.
+// Consulta dados de CNPJ na Receita Federal. Tenta múltiplas fontes
+// porque APIs gratuitas costumam bloquear IPs de cloud providers.
 async function buscarBrasilAPI(cnpj: string): Promise<{
   optante_simples: boolean | null;
   optante_mei: boolean | null;
@@ -69,26 +69,77 @@ async function buscarBrasilAPI(cnpj: string): Promise<{
   situacao: string | null;
   found: boolean;
 } | null> {
-  if (cnpj.length !== 14) return null; // só consulta CNPJ
+  if (cnpj.length !== 14) return null;
+
+  const headers = {
+    "User-Agent": "MedX-Medwork/1.0 (contato@medworkto.com)",
+    "Accept": "application/json",
+  };
+
+  // Tentativa 1: BrasilAPI
   try {
     const r = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`, {
+      headers,
       signal: AbortSignal.timeout(8000),
     });
     if (r.status === 404) {
       return { optante_simples: null, optante_mei: null, porte: null, situacao: null, found: false };
     }
-    if (!r.ok) return null;
-    const j: any = await r.json();
-    return {
-      optante_simples: j?.opcao_pelo_simples === true,
-      optante_mei: j?.opcao_pelo_mei === true,
-      porte: j?.porte || null,
-      situacao: j?.descricao_situacao_cadastral || null,
-      found: true,
-    };
-  } catch {
-    return null;
-  }
+    if (r.ok) {
+      const j: any = await r.json();
+      return {
+        optante_simples: j?.opcao_pelo_simples === true,
+        optante_mei: j?.opcao_pelo_mei === true,
+        porte: j?.porte || null,
+        situacao: j?.descricao_situacao_cadastral || null,
+        found: true,
+      };
+    }
+  } catch {}
+
+  // Tentativa 2: cnpj.ws (similar, mesmos dados, IP-friendly)
+  try {
+    const r = await fetch(`https://publica.cnpj.ws/cnpj/${cnpj}`, {
+      headers,
+      signal: AbortSignal.timeout(8000),
+    });
+    if (r.status === 404) {
+      return { optante_simples: null, optante_mei: null, porte: null, situacao: null, found: false };
+    }
+    if (r.ok) {
+      const j: any = await r.json();
+      return {
+        optante_simples: j?.simples?.simples === "Sim",
+        optante_mei: j?.simples?.mei === "Sim",
+        porte: j?.porte?.descricao || null,
+        situacao: j?.estabelecimento?.situacao_cadastral || null,
+        found: true,
+      };
+    }
+  } catch {}
+
+  // Tentativa 3: ReceitaWS (último recurso)
+  try {
+    const r = await fetch(`https://receitaws.com.br/v1/cnpj/${cnpj}`, {
+      headers,
+      signal: AbortSignal.timeout(10000),
+    });
+    if (r.ok) {
+      const j: any = await r.json();
+      if (j?.status === "ERROR") return null;
+      const opcaoSimples = String(j?.opcao_pelo_simples || "").toUpperCase();
+      const opcaoMei = String(j?.opcao_pelo_mei || "").toUpperCase();
+      return {
+        optante_simples: opcaoSimples === "SIM" || opcaoSimples === "TRUE",
+        optante_mei: opcaoMei === "SIM" || opcaoMei === "TRUE",
+        porte: j?.porte || null,
+        situacao: j?.situacao || null,
+        found: true,
+      };
+    }
+  } catch {}
+
+  return null;
 }
 
 // Resolve retenção tributária cruzando CA (orgão público) + BrasilAPI (regime real).
