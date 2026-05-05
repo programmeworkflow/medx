@@ -1211,36 +1211,85 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         "49e2c1f3-c117-4882-82d0-e9ae9795f882";
       const categoriaId = body.categoria_id || undefined;
       const centroCustoId = body.centro_custo_id || undefined;
-      const buildPayload = (numero: number) => ({
-        id_cliente: personId,
-        numero,
-        data_venda: dataVenda,
-        situacao: "APROVADO",
-        observacoes: body.observacoes || undefined,
-        itens: [
-          {
-            id: servicoId,
-            descricao: body.servico,
-            quantidade: 1,
-            valor,
-          },
-        ],
-        condicao_pagamento: {
-          opcao_condicao_pagamento: "À vista",
-          parcelas: [
+      // Busca cadastro da empresa MedX pra pegar retenções configuradas
+      let retencoesConfig: any = null;
+      try {
+        const sbRet = supaAdmin();
+        const { data: empMedX } = await sbRet
+          .from("empresas")
+          .select("retem_iss, retem_ir, retem_inss, retem_pis_cofins_csll, regime_tributario")
+          .eq("cnpj", cnpjDigits)
+          .maybeSingle();
+        retencoesConfig = empMedX;
+      } catch {}
+
+      // Override manual via body tem precedência (caso usuário queira forçar)
+      const retemIss = body.retem_iss !== undefined ? !!body.retem_iss : !!retencoesConfig?.retem_iss;
+      const retemIr = body.retem_ir !== undefined ? !!body.retem_ir : !!retencoesConfig?.retem_ir;
+      const retemInss = body.retem_inss !== undefined ? !!body.retem_inss : !!retencoesConfig?.retem_inss;
+      const retemPisCofinsCsll = body.retem_pis_cofins_csll !== undefined ? !!body.retem_pis_cofins_csll : !!retencoesConfig?.retem_pis_cofins_csll;
+
+      const buildPayload = (numero: number) => {
+        // Calcula valores das retenções (alíquotas padrão — CA aceita ajustar)
+        const retencoes: any = {};
+        if (retemIss) {
+          retencoes.iss_retido = true;
+          retencoes.aliquota_iss = body.aliquota_iss ?? 5; // padrão 5%
+          retencoes.valor_iss_retido = +(valor * (body.aliquota_iss ?? 5) / 100).toFixed(2);
+        }
+        if (retemIr) {
+          retencoes.ir_retido = true;
+          retencoes.aliquota_ir = body.aliquota_ir ?? 1.5;
+          retencoes.valor_ir_retido = +(valor * (body.aliquota_ir ?? 1.5) / 100).toFixed(2);
+        }
+        if (retemInss) {
+          retencoes.inss_retido = true;
+          retencoes.aliquota_inss = body.aliquota_inss ?? 11;
+          retencoes.valor_inss_retido = +(valor * (body.aliquota_inss ?? 11) / 100).toFixed(2);
+        }
+        if (retemPisCofinsCsll) {
+          retencoes.pis_retido = true;
+          retencoes.cofins_retido = true;
+          retencoes.csll_retida = true;
+          retencoes.aliquota_pis = 0.65;
+          retencoes.aliquota_cofins = 3;
+          retencoes.aliquota_csll = 1;
+          retencoes.valor_pis_retido = +(valor * 0.65 / 100).toFixed(2);
+          retencoes.valor_cofins_retido = +(valor * 3 / 100).toFixed(2);
+          retencoes.valor_csll_retido = +(valor * 1 / 100).toFixed(2);
+        }
+        return {
+          id_cliente: personId,
+          numero,
+          data_venda: dataVenda,
+          situacao: "APROVADO",
+          observacoes: body.observacoes || undefined,
+          itens: [
             {
-              numero_parcela: 1,
-              valor,
-              data_vencimento: dataVenc,
+              id: servicoId,
               descricao: body.servico,
-              forma_pagamento: "BOLETO_BANCARIO",
-              id_conta: contaRecebimentoId,
-              ...(categoriaId ? { id_categoria: categoriaId } : {}),
-              ...(centroCustoId ? { id_centro_de_custo: centroCustoId } : {}),
+              quantidade: 1,
+              valor,
             },
           ],
-        },
-      });
+          condicao_pagamento: {
+            opcao_condicao_pagamento: "À vista",
+            parcelas: [
+              {
+                numero_parcela: 1,
+                valor,
+                data_vencimento: dataVenc,
+                descricao: body.servico,
+                forma_pagamento: "BOLETO_BANCARIO",
+                id_conta: contaRecebimentoId,
+                ...(categoriaId ? { id_categoria: categoriaId } : {}),
+                ...(centroCustoId ? { id_centro_de_custo: centroCustoId } : {}),
+              },
+            ],
+          },
+          ...(Object.keys(retencoes).length > 0 ? { retencoes } : {}),
+        };
+      };
 
       // Estratégia pra escolher próximo número da venda:
       // 1. Lê maior numero salvo no banco local (vendas criadas via MedX)
