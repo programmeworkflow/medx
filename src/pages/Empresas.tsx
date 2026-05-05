@@ -17,6 +17,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import { formatCnpjCpf, maskCnpjCpf, onlyDigits, detectDocumentoTipo } from "@/lib/format";
+import { confirmDialog } from "@/lib/confirm";
 import {
   fetchEmpresas,
   insertEmpresa,
@@ -915,7 +916,14 @@ export default function Empresas() {
                     variant="destructive"
                     size="sm"
                     onClick={async () => {
-                      if (!confirm(`Excluir ${totalDupes} duplicata${totalDupes > 1 ? "s" : ""}? Essa ação não pode ser desfeita.`)) return;
+                      const confirmed = await confirmDialog({
+                        title: `Excluir ${totalDupes} duplicata${totalDupes > 1 ? "s" : ""}?`,
+                        description: "Mantém a 1ª empresa de cada grupo de CNPJ duplicado e remove as demais. Esta ação não pode ser desfeita.",
+                        confirmText: `Excluir ${totalDupes}`,
+                        cancelText: "Cancelar",
+                        variant: "danger",
+                      });
+                      if (!confirmed) return;
                       const toDelete = duplicates.flatMap(([, arr]) => arr.slice(1));
                       let ok = 0, fail = 0;
                       for (const e of toDelete) {
@@ -958,7 +966,13 @@ export default function Empresas() {
                         variant="destructive"
                         size="sm"
                         onClick={async () => {
-                          if (!confirm(`Excluir a duplicata "${e.nome_empresa}"?`)) return;
+                          const confirmed = await confirmDialog({
+                            title: "Excluir duplicata?",
+                            description: `Remover "${e.nome_empresa}" do cadastro. Esta ação não pode ser desfeita.`,
+                            confirmText: "Excluir",
+                            variant: "danger",
+                          });
+                          if (!confirmed) return;
                           try {
                             await deleteEmpresa(e.id);
                             queryClient.invalidateQueries({ queryKey: ["empresas"] });
