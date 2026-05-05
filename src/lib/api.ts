@@ -126,16 +126,37 @@ export async function deleteEmpresa(id: string) {
 // vinculados (faturamentos, treinamentos, empresas que faturam por ela) e
 // só depois exclui o registro duplicado. Preserva histórico.
 export async function mergeEmpresaDuplicate(keepId: string, duplicateId: string) {
-  // 1. Move faturamentos da duplicata pra "manter"
-  await supabase.from("faturamentos").update({ empresa_id: keepId }).eq("empresa_id", duplicateId);
-  await supabase.from("faturamentos").update({ empresa_faturadora_id: keepId }).eq("empresa_faturadora_id", duplicateId);
-  // 2. Move treinamentos
-  await supabase.from("treinamentos").update({ empresa_id: keepId }).eq("empresa_id", duplicateId);
-  // 3. Move qualquer empresa que tenha a duplicata como faturadora
-  await supabase.from("empresas").update({ empresa_faturadora_id: keepId }).eq("empresa_faturadora_id", duplicateId);
-  // 4. Agora pode excluir
-  const { error } = await supabase.from("empresas").delete().eq("id", duplicateId);
-  if (error) throw error;
+  // 1. Move faturamentos onde a duplicata é executora
+  const r1 = await supabase
+    .from("faturamentos")
+    .update({ empresa_executora_id: keepId })
+    .eq("empresa_executora_id", duplicateId);
+  if (r1.error) throw new Error(`faturamentos.executora: ${r1.error.message}`);
+
+  // 2. Move faturamentos onde a duplicata é faturadora
+  const r2 = await supabase
+    .from("faturamentos")
+    .update({ empresa_faturadora_id: keepId })
+    .eq("empresa_faturadora_id", duplicateId);
+  if (r2.error) throw new Error(`faturamentos.faturadora: ${r2.error.message}`);
+
+  // 3. Move treinamentos vinculados
+  const r3 = await supabase
+    .from("treinamentos")
+    .update({ empresa_id: keepId })
+    .eq("empresa_id", duplicateId);
+  if (r3.error) throw new Error(`treinamentos: ${r3.error.message}`);
+
+  // 4. Move qualquer outra empresa que tenha a duplicata como faturadora
+  const r4 = await supabase
+    .from("empresas")
+    .update({ empresa_faturadora_id: keepId })
+    .eq("empresa_faturadora_id", duplicateId);
+  if (r4.error) throw new Error(`empresas.faturadora: ${r4.error.message}`);
+
+  // 5. Agora pode excluir o cadastro duplicado vazio
+  const r5 = await supabase.from("empresas").delete().eq("id", duplicateId);
+  if (r5.error) throw new Error(`delete: ${r5.error.message}`);
 }
 
 export type FaturamentoUpdate = Database["public"]["Tables"]["faturamentos"]["Update"];
