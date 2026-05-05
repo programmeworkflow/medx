@@ -925,6 +925,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    if (action === "retencao-stats") {
+      // Estatísticas das retenções nas empresas — pra verificar resultado da sync
+      const sb = supaAdmin();
+      const { data: empresas } = await sb.from("empresas").select("id, nome_empresa, cnpj, retem_iss, retem_ir, retem_inss, retem_pis_cofins_csll, regime_tributario, optante_simples, orgao_publico, retencao_atualizada_em, retencao_fonte");
+      const total = empresas?.length || 0;
+      const stats: any = {
+        total,
+        atualizadas: 0,
+        nunca_atualizadas: 0,
+        encontradas_ca: 0,
+        nao_encontradas: 0,
+        por_regime: { simples: 0, lucro_presumido_ou_real: 0, orgao_publico: 0, pessoa_fisica: 0, sem_regime: 0 },
+        retem_iss: { sim: 0, nao: 0, indefinido: 0 },
+        amostras: { com_retencao_iss: [] as any[], sem_retencao_iss: [] as any[], nao_encontradas: [] as any[] },
+      };
+      for (const e of empresas || []) {
+        if (e.retencao_atualizada_em) stats.atualizadas++;
+        else stats.nunca_atualizadas++;
+        if (e.retencao_fonte === "ca") stats.encontradas_ca++;
+        else if (e.retencao_fonte === "nao_encontrado_ca") stats.nao_encontradas++;
+        const r = e.regime_tributario || "sem_regime";
+        if (stats.por_regime[r] !== undefined) stats.por_regime[r]++;
+        else stats.por_regime[r] = 1;
+        if (e.retem_iss === true) stats.retem_iss.sim++;
+        else if (e.retem_iss === false) stats.retem_iss.nao++;
+        else stats.retem_iss.indefinido++;
+        // Amostras (5 de cada)
+        if (e.retem_iss === true && stats.amostras.com_retencao_iss.length < 5) {
+          stats.amostras.com_retencao_iss.push({ nome: e.nome_empresa, cnpj: e.cnpj, regime: e.regime_tributario });
+        } else if (e.retem_iss === false && stats.amostras.sem_retencao_iss.length < 5) {
+          stats.amostras.sem_retencao_iss.push({ nome: e.nome_empresa, cnpj: e.cnpj, regime: e.regime_tributario });
+        } else if (e.retencao_fonte === "nao_encontrado_ca" && stats.amostras.nao_encontradas.length < 5) {
+          stats.amostras.nao_encontradas.push({ nome: e.nome_empresa, cnpj: e.cnpj });
+        }
+      }
+      return res.status(200).json(stats);
+    }
+
     if (action === "debug") {
       const path = (req.query.path as string) || "/v1/pessoas?perPage=1";
       const method = (req.query.method as string)?.toUpperCase() || (req.method === "GET" ? "GET" : "POST");
