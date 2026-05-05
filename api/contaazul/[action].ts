@@ -23,13 +23,46 @@ import {
 // Garante que a pessoa na Conta Azul tem endereço completo (exigido pra NFS-e
 // pela maioria das prefeituras). Tenta puxar do registro local da empresa em
 // `empresas` e, se faltar, completa com BrasilAPI usando o CNPJ.
-// Busca CNPJ no Conta Azul e deduz retenções tributárias.
-// Heurística (validada com casos reais):
-//   - Órgão público     → SEMPRE retém ISS+IR+INSS+PIS/COFINS/CSLL
-//   - Pessoa Física     → não retém (consumidor final)
-//   - Optante Simples   → não retém (já paga DAS)
-//   - PJ não-Simples    → retém ISS na maioria dos municípios
-async function buscarRetencaoNoCA(cnpjOrCpf: string): Promise<{
+// Cache em memória da lista completa do CA (3000+ pessoas).
+// Indexa por documento (CNPJ/CPF só dígitos). TTL de 5 min por execução.
+let _caPessoasCache: { map: Map<string, any>; loadedAt: number } | null = null;
+
+async function carregarPessoasCAIndexadas(): Promise<Map<string, any>> {
+  // Cache válido por 5 min — evita re-carregar entre chunks consecutivos
+  if (_caPessoasCache && Date.now() - _caPessoasCache.loadedAt < 300_000) {
+    return _caPessoasCache.map;
+  }
+
+  const PAGE = 100;
+  // Página 1 pra saber total
+  const r1 = await caApi("GET", `/v1/pessoas?tamanho_pagina=${PAGE}&pagina=1`);
+  const items1: any[] = r1?.itens || r1?.items || [];
+  const total: number = r1?.totalItems ?? items1.length;
+  const totalPages = Math.ceil(total / PAGE);
+
+  const allItems: any[] = [...items1];
+  // Páginas 2..N em paralelo (lotes de 5)
+  for (let start = 2; start <= totalPages; start += 5) {
+    const batch = Array.from({ length: Math.min(5, totalPages - start + 1) }, (_, i) => {
+      const qs = new URLSearchParams({ tamanho_pagina: String(PAGE), pagina: String(start + i) });
+      return caApi("GET", `/v1/pessoas?${qs}`).then((r: any) => r?.items || r?.itens || []).catch(() => []);
+    });
+    const pages = await Promise.all(batch);
+    pages.forEach((p: any[]) => allItems.push(...p));
+  }
+
+  const map = new Map<string, any>();
+  for (const p of allItems) {
+    const doc = String(p?.documento || "").replace(/\D/g, "");
+    if (doc) map.set(doc, p);
+  }
+  _caPessoasCache = { map, loadedAt: Date.now() };
+  return map;
+}
+
+// Pega detalhes da pessoa (optante_simples_nacional, orgao_publico) e
+// aplica heurística de retenção. Use isso depois de já ter o ca_id pelo map.
+async function buscarRetencaoPorPessoaId(caPessoaId: string): Promise<{
   retem_iss: boolean | null;
   retem_ir: boolean;
   retem_inss: boolean;
@@ -37,40 +70,18 @@ async function buscarRetencaoNoCA(cnpjOrCpf: string): Promise<{
   regime_tributario: string | null;
   optante_simples: boolean | null;
   orgao_publico: boolean;
-  fonte: "ca" | "nao_encontrado_ca";
+  fonte: "ca";
 }> {
-  const digits = cnpjOrCpf.replace(/\D/g, "");
-  // 1. Procura no CA
-  let pessoa: any = null;
+  let detalhes: any = {};
   try {
-    const r = await caApi("GET", `/v1/pessoas?busca=${digits}&tamanho_pagina=5&pagina=1`);
-    const items: any[] = r?.itens || r?.items || [];
-    pessoa = items.find((p) => String(p?.documento || "").replace(/\D/g, "") === digits);
-  } catch {}
-
-  if (!pessoa) {
-    return {
-      retem_iss: null,
-      retem_ir: false,
-      retem_inss: false,
-      retem_pis_cofins_csll: false,
-      regime_tributario: null,
-      optante_simples: null,
-      orgao_publico: false,
-      fonte: "nao_encontrado_ca",
-    };
-  }
-
-  // 2. Pega detalhes (campos optante_simples_nacional, orgao_publico, etc)
-  let detalhes: any = pessoa;
-  try {
-    detalhes = await caApi("GET", `/v1/pessoas/${pessoa.id}`);
+    detalhes = await caApi("GET", `/v1/pessoas/${caPessoaId}`);
   } catch {}
 
   const optante = detalhes?.optante_simples_nacional === true;
   const orgaoPub = detalhes?.orgao_publico === true;
   const tipoPessoa = String(detalhes?.tipo_pessoa || "").toLowerCase();
-  const isPF = tipoPessoa.includes("física") || digits.length === 11;
+  const docDigits = String(detalhes?.documento || "").replace(/\D/g, "");
+  const isPF = tipoPessoa.includes("física") || docDigits.length === 11;
 
   // Heurística de retenção
   let remIss = false, remIr = false, remInss = false, remPisCofins = false;
@@ -86,7 +97,7 @@ async function buscarRetencaoNoCA(cnpjOrCpf: string): Promise<{
     remIss = false;
   } else {
     regime = "lucro_presumido_ou_real";
-    remIss = true; // PJ não-Simples retém ISS na maioria dos municípios
+    remIss = true;
   }
 
   return {
@@ -546,39 +557,60 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!cnpj || (cnpj.length !== 14 && cnpj.length !== 11)) {
         return res.status(400).json({ error: "cnpj/cpf inválido" });
       }
-      const result = await buscarRetencaoNoCA(cnpj);
+      // Carrega lista CA, busca no map (CA não tem busca server-side por documento)
+      const map = await carregarPessoasCAIndexadas();
+      const pessoa = map.get(cnpj);
+      if (!pessoa) {
+        return res.status(200).json({
+          retem_iss: null, retem_ir: false, retem_inss: false, retem_pis_cofins_csll: false,
+          regime_tributario: null, optante_simples: null, orgao_publico: false,
+          fonte: "nao_encontrado_ca",
+        });
+      }
+      const result = await buscarRetencaoPorPessoaId(pessoa.id);
       return res.status(200).json(result);
     }
 
     if (action === "sync-retencao") {
       // Batch: processa empresas do Supabase, busca no CA, atualiza retenção.
-      // Use ?offset=0&limit=50 e itere até next_offset == null.
+      // Carrega lista completa do CA uma vez (CA não tem busca por documento),
+      // indexa por documento, e processa em chunks pra caber no timeout.
       const offset = Number(req.query.offset || 0);
-      const limit = Math.min(Number(req.query.limit || 50), 100);
+      const limit = Math.min(Number(req.query.limit || 30), 50);
       const sb = supaAdmin();
 
-      // Pega as empresas que precisam ser atualizadas (mais antigas primeiro)
+      // 1. Carrega map { documento → ca_pessoa } UMA VEZ
+      const map = await carregarPessoasCAIndexadas();
+
+      // 2. Pega lote de empresas
       const { data: empresas, error } = await sb
         .from("empresas")
-        .select("id, cnpj, nome_empresa")
+        .select("id, cnpj")
         .order("retencao_atualizada_em", { ascending: true, nullsFirst: true })
         .range(offset, offset + limit - 1);
       if (error) return res.status(500).json({ error: error.message });
 
-      const stats = {
-        processadas: 0,
-        encontradas_ca: 0,
-        nao_encontradas: 0,
-        erros: [] as any[],
-      };
+      const stats = { processadas: 0, encontradas_ca: 0, nao_encontradas: 0, erros: [] as any[] };
 
-      for (const empresa of empresas || []) {
+      // 3. Processa em paralelo (5 simultâneos pra não estressar CA)
+      const tasks = (empresas || []).map((empresa: any) => async () => {
         try {
           const cnpjDigits = String(empresa.cnpj || "").replace(/\D/g, "");
-          if (cnpjDigits.length !== 14 && cnpjDigits.length !== 11) {
-            continue;
+          if (cnpjDigits.length !== 14 && cnpjDigits.length !== 11) return;
+
+          const pessoa = map.get(cnpjDigits);
+          let ret;
+          if (!pessoa) {
+            ret = {
+              retem_iss: null, retem_ir: false, retem_inss: false, retem_pis_cofins_csll: false,
+              regime_tributario: null, optante_simples: null, orgao_publico: false,
+              fonte: "nao_encontrado_ca" as const,
+            };
+            stats.nao_encontradas++;
+          } else {
+            ret = await buscarRetencaoPorPessoaId(pessoa.id);
+            stats.encontradas_ca++;
           }
-          const ret = await buscarRetencaoNoCA(cnpjDigits);
           await sb.from("empresas").update({
             retem_iss: ret.retem_iss,
             retem_ir: ret.retem_ir,
@@ -591,15 +623,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             retencao_fonte: ret.fonte,
           }).eq("id", empresa.id);
           stats.processadas++;
-          if (ret.fonte === "ca") stats.encontradas_ca++;
-          else stats.nao_encontradas++;
         } catch (err: any) {
           stats.erros.push({ cnpj: empresa.cnpj, erro: err?.message?.slice(0, 200) });
         }
+      });
+
+      // Roda em batches de 5
+      for (let i = 0; i < tasks.length; i += 5) {
+        await Promise.all(tasks.slice(i, i + 5).map((t) => t()));
       }
 
       const nextOffset = (empresas?.length || 0) === limit ? offset + limit : null;
-      return res.status(200).json({ ok: true, offset, limit, ...stats, next_offset: nextOffset });
+      return res.status(200).json({
+        ok: true, offset, limit, ...stats,
+        ca_total_indexed: map.size,
+        next_offset: nextOffset,
+      });
     }
 
     if (action === "fornecedores") {
