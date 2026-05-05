@@ -695,10 +695,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // 1. Carrega map { documento → ca_pessoa } UMA VEZ
       const map = await carregarPessoasCAIndexadas();
 
-      // 2. Pega lote de empresas
+      // 2. Pega lote de empresas (PULA empresas com override manual)
       const { data: empresas, error } = await sb
         .from("empresas")
         .select("id, cnpj")
+        .or("retencao_fonte.is.null,retencao_fonte.neq.manual")
         .order("retencao_atualizada_em", { ascending: true, nullsFirst: true })
         .range(offset, offset + limit - 1);
       if (error) return res.status(500).json({ error: error.message });

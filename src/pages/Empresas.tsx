@@ -83,6 +83,10 @@ export default function Empresas() {
   const [janelaFechamento, setJanelaFechamento] = useState("");
   const [retencaoPadrao, setRetencaoPadrao] = useState<string>("nenhuma");
   const [nfModo, setNfModo] = useState<"nao_emite" | "manual" | "automatica">("manual");
+  const [retemIss, setRetemIss] = useState<boolean | null>(null);
+  const [retencaoFonte, setRetencaoFonte] = useState<string | null>(null);
+  const [regimeTributario, setRegimeTributario] = useState<string | null>(null);
+  const [retemIssEdited, setRetemIssEdited] = useState(false);
   const [enviarEmailPadrao, setEnviarEmailPadrao] = useState<boolean>(false);
   const [centroCustoId, setCentroCustoId] = useState<string>("");
 
@@ -166,6 +170,7 @@ export default function Empresas() {
     setNome(""); setCnpj(""); setObs(""); setCategoria("medwork"); setTipo("propria_empresa"); setFatId(""); setAtiva(true);
     setVidasContrato(""); setVidasEso(""); setDataFechamentoEspecial(""); setJanelaFechamento("");
     setRetencaoPadrao("nenhuma"); setNfModo("manual"); setEnviarEmailPadrao(false);
+    setRetemIss(null); setRetencaoFonte(null); setRegimeTributario(null); setRetemIssEdited(false);
     setCentroCustoId("");
   };
 
@@ -183,6 +188,9 @@ export default function Empresas() {
     setDataFechamentoEspecial(e.data_fechamento_especial || "");
     setJanelaFechamento(e.janela_fechamento || "");
     setRetencaoPadrao((e as any).retencao_padrao || "nenhuma");
+    setRetemIss((e as any).retem_iss);
+    setRetencaoFonte((e as any).retencao_fonte || null);
+    setRegimeTributario((e as any).regime_tributario || null);
     // nf_modo é o campo novo; cai pra emitir_nf_padrao boolean (legado)
     const modoSalvo = (e as any).nf_modo as string | undefined;
     setNfModo(
@@ -239,6 +247,12 @@ export default function Empresas() {
       data_fechamento_especial: dataFechamentoEspecial || null,
       janela_fechamento: janelaFechamento || null,
       retencao_padrao: retencaoPadrao,
+      // Se o user tocou no toggle, marca como manual e o sync nunca sobrescreve
+      ...(retemIssEdited ? {
+        retem_iss: retemIss,
+        retencao_fonte: "manual" as any,
+        retencao_atualizada_em: new Date().toISOString(),
+      } : {}),
       nf_modo: nfModo,
       emitir_nf_padrao: nfModo === "automatica",
       enviar_email_padrao: enviarEmailPadrao,
@@ -710,6 +724,50 @@ export default function Empresas() {
                           {nfModo === "automatica" && " Default marcado, toda venda gera NF."}
                         </p>
                       </div>
+                      {editingId && (
+                        <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <Label className="text-sm">Retém ISS</Label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRetemIss(retemIss === true ? false : retemIss === false ? null : true);
+                                setRetemIssEdited(true);
+                              }}
+                              className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
+                                retemIss === true ? "bg-success/15 text-success" :
+                                retemIss === false ? "bg-muted text-muted-foreground" :
+                                "bg-amber-500/15 text-amber-500"
+                              }`}
+                            >
+                              {retemIss === true ? "Sim" : retemIss === false ? "Não" : "Indefinido"}
+                            </button>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {regimeTributario && `Regime: ${regimeTributario}`}
+                            {retencaoFonte === "manual" && " · 🔒 Override manual (sync não altera)"}
+                            {retencaoFonte && retencaoFonte !== "manual" && ` · 🤖 Auto (${retencaoFonte})`}
+                          </p>
+                          {retencaoFonte === "manual" && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRetencaoFonte(null);
+                                setRetemIssEdited(false);
+                                toast.info("Quando você salvar, o sync voltará a atualizar essa empresa automaticamente.");
+                              }}
+                              className="text-xs text-primary hover:underline"
+                            >
+                              ↺ Voltar pra automático
+                            </button>
+                          )}
+                          {retemIssEdited && (
+                            <p className="text-xs text-amber-600 dark:text-amber-400">
+                              ⚠ Ao salvar, será marcado como manual — sync não vai mais sobrescrever.
+                            </p>
+                          )}
+                        </div>
+                      )}
                       <label className="flex items-start gap-2 cursor-pointer p-3 rounded-lg border border-border">
                         <input
                           type="checkbox"
