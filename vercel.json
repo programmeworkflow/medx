@@ -2,6 +2,10 @@
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/" }
   ],
+  "functions": {
+    "api/esocial/sync.ts": { "maxDuration": 60 },
+    "api/eso/[action].ts": { "maxDuration": 60 }
+  },
   "crons": [
     {
       "path": "/api/eso/sync-companies",
