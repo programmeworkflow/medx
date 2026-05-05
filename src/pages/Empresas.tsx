@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import { formatCnpjCpf, maskCnpjCpf, onlyDigits, detectDocumentoTipo } from "@/lib/format";
 import { confirmDialog } from "@/lib/confirm";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   fetchEmpresas,
   insertEmpresa,
@@ -49,6 +50,9 @@ export default function Empresas() {
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkProgress, setBulkProgress] = useState({ ok: 0, fail: 0, errors: [] as string[] });
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleteRunning, setBulkDeleteRunning] = useState(false);
+  const [bulkDeleteProgress, setBulkDeleteProgress] = useState({ ok: 0, fail: 0, errors: [] as string[] });
 
   // Filters
   const [filterCategoria, setFilterCategoria] = useState<string>("all");
@@ -707,9 +711,18 @@ export default function Empresas() {
       {/* Bulk actions */}
       {selectedIds.size > 0 && (
         <div className="flex items-center gap-3 p-3 rounded-lg bg-primary/10 border border-primary/20">
-          <span className="text-sm font-medium">{selectedIds.size} selecionadas</span>
+          <span className="text-sm font-medium">{selectedIds.size} selecionada{selectedIds.size > 1 ? "s" : ""}</span>
           <Button size="sm" variant="outline" onClick={() => setBulkCatOpen(true)}>
-            Alterar Categoria em Lote
+            Alterar categoria
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={() => setBulkDeleteOpen(true)}
+            disabled={bulkDeleteRunning}
+          >
+            <Trash2 className="h-3.5 w-3.5 mr-1" />
+            {bulkDeleteRunning ? `Excluindo ${bulkDeleteProgress.ok + bulkDeleteProgress.fail}/${selectedIds.size}…` : "Excluir selecionadas"}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>Limpar</Button>
         </div>
@@ -774,10 +787,23 @@ export default function Empresas() {
                   </TableRow>
                 );
               })}
-              {filtered.length === 0 && (
+              {isLoading && filtered.length === 0 && Array.from({ length: 6 }).map((_, i) => (
+                <TableRow key={`sk-${i}`}>
+                  <TableCell colSpan={8} className="py-3">
+                    <div className="flex items-center gap-3">
+                      <Skeleton className="h-4 w-4 rounded" />
+                      <Skeleton className="h-4 flex-1 max-w-[200px]" />
+                      <Skeleton className="h-4 w-32" />
+                      <Skeleton className="h-5 w-20" />
+                      <Skeleton className="h-4 w-16" />
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {!isLoading && filtered.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-10 text-muted-foreground">
-                    {isLoading ? "Carregando..." : "Nenhuma empresa encontrada."}
+                  <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
+                    Nenhuma empresa encontrada.
                   </TableCell>
                 </TableRow>
               )}
@@ -982,7 +1008,77 @@ export default function Empresas() {
         </DialogContent>
       </Dialog>
 
-      {/* Confirm bulk delete — AlertDialog inline (mesmo escopo, sem portal aninhado) */}
+      {/* Bulk delete (selecionadas) — AlertDialog inline */}
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Excluir {selectedIds.size} empresa{selectedIds.size > 1 ? "s" : ""}?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="text-sm text-muted-foreground space-y-2">
+                <p>
+                  As empresas selecionadas serão excluídas do cadastro.
+                  Esta ação não pode ser desfeita.
+                </p>
+                <p className="text-destructive">
+                  <strong>Atenção:</strong> empresas com faturamentos ou treinamentos vinculados não serão excluídas.
+                  Pra essas, use a tela de duplicatas (que <em>mescla</em> os dados).
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={bulkDeleteRunning}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={bulkDeleteRunning}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async (ev) => {
+                ev.preventDefault();
+                setBulkDeleteRunning(true);
+                setBulkDeleteProgress({ ok: 0, fail: 0, errors: [] });
+                let ok = 0, fail = 0;
+                const errors: string[] = [];
+                for (const id of selectedIds) {
+                  const empresa = empresas.find((x) => x.id === id);
+                  try {
+                    await deleteEmpresa(id);
+                    ok++;
+                  } catch (err: any) {
+                    fail++;
+                    errors.push(`${empresa?.nome_empresa || id}: ${err?.message || "erro"}`);
+                    console.error("Falha ao excluir", empresa?.nome_empresa, err);
+                  }
+                  setBulkDeleteProgress({ ok, fail, errors });
+                }
+                queryClient.invalidateQueries({ queryKey: ["empresas"] });
+                setBulkDeleteOpen(false);
+                setBulkDeleteRunning(false);
+                setSelectedIds(new Set());
+                if (fail === 0) {
+                  toast.success(`✅ ${ok} empresa${ok > 1 ? "s" : ""} excluída${ok > 1 ? "s" : ""}!`, { duration: 6000 });
+                } else if (ok === 0) {
+                  toast.error(`Nenhuma excluída — ${fail} têm dados vinculados`, {
+                    description: "Use a tela de duplicatas pra mesclar empresas com faturamentos. Ver console (F12) pra detalhes.",
+                    duration: 10000,
+                  });
+                } else {
+                  toast.warning(`${ok} excluída(s) · ${fail} ignorada(s)`, {
+                    description: "Algumas tinham faturamentos/treinamentos vinculados.",
+                    duration: 10000,
+                  });
+                }
+              }}
+            >
+              {bulkDeleteRunning
+                ? `Excluindo ${bulkDeleteProgress.ok + bulkDeleteProgress.fail}/${selectedIds.size}…`
+                : `Excluir ${selectedIds.size}`}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirm bulk delete duplicatas — AlertDialog inline (mesmo escopo, sem portal aninhado) */}
       <AlertDialog open={bulkConfirmOpen} onOpenChange={setBulkConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
