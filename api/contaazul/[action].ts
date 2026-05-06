@@ -1241,8 +1241,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       let svcsCache: any[] | null = null;
       const carregarServicos = async () => {
         if (svcsCache) return svcsCache;
-        const svcs = await caApi("GET", "/v1/servicos?perPage=200");
-        svcsCache = svcs?.itens || svcs?.items || [];
+        // CA ignora ?perPage. Parâmetro correto é tamanho_pagina=100.
+        const all: any[] = [];
+        for (let pagina = 1; pagina <= 5; pagina++) {
+          const r = await caApi("GET", `/v1/servicos?tamanho_pagina=100&pagina=${pagina}`);
+          const items = r?.itens || r?.items || [];
+          all.push(...items);
+          if (items.length < 100) break;
+        }
+        svcsCache = all;
         return svcsCache!;
       };
       if (!servicoId) {
