@@ -1086,6 +1086,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ok: true, resetadas: count, apenas_indefinidas: apenasIndefinidas });
     }
 
+    if (action === "ultimas-vendas") {
+      // Retorna as últimas vendas criadas com status de NF/boleto pra debug
+      const sb = supaAdmin();
+      const { data } = await sb
+        .from("contaazul_vendas")
+        .select("ca_venda_id, cnpj, servico, valor, data_venda, nf_status, nf_erro, nf_numero, boleto_status, boleto_erro, raw")
+        .order("created_at", { ascending: false })
+        .limit(10);
+      return res.status(200).json({
+        ok: true,
+        vendas: (data || []).map((v: any) => ({
+          venda_id: v.ca_venda_id,
+          numero: v.raw?.venda?.numero,
+          cnpj: v.cnpj,
+          servico: v.servico,
+          valor: v.valor,
+          data: v.data_venda,
+          nf: { status: v.nf_status, erro: v.nf_erro, numero: v.nf_numero },
+          boleto: { status: v.boleto_status, erro: v.boleto_erro },
+        })),
+      });
+    }
+
     if (action === "retencao-stats") {
       // Estatísticas das retenções nas empresas — pra verificar resultado da sync
       const sb = supaAdmin();
