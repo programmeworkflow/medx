@@ -381,6 +381,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
               body: JSON.stringify({
                 destinatarios,
                 cc: ccArr,
+                venda_id_ca: res.vendaId,
                 link_eso: l.linkEso || undefined,
                 link_boleto: res.boletoUrl || undefined,
                 linha_digitavel: res.boletoLinhaDigitavel || undefined,

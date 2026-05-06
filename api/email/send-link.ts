@@ -49,6 +49,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const dataVencimento = String(body.data_vencimento || "").trim();
     const empresaNome = String(body.empresa_nome || "").trim();
     const numeroVenda = body.numero_venda ? String(body.numero_venda) : "";
+    // Link público da fatura no CA (mostra boleto + NF + valor com retenção)
+    const vendaIdCA = String(body.venda_id_ca || "").trim();
+    const linkFaturaCA = vendaIdCA ? `https://app.contaazul.com/pub/#/invoice/v2/${vendaIdCA}` : "";
     const cc: string[] = Array.isArray(body.cc)
       ? body.cc.filter((e: string) => e && e.includes("@"))
       : [];
@@ -56,8 +59,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (destinatarios.length === 0) {
       return res.status(400).json({ error: "destinatarios obrigatório (array de emails)" });
     }
-    if (!linkEso && !linkBoleto && !linkNf && !linhaDigitavel) {
-      return res.status(400).json({ error: "informe ao menos 1 link (link_eso, link_boleto, link_nf)" });
+    if (!linkEso && !linkBoleto && !linkNf && !linhaDigitavel && !linkFaturaCA) {
+      return res.status(400).json({ error: "informe ao menos 1 link" });
     }
 
     const fmtMoney = (v: number | null) =>
@@ -81,13 +84,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (valor) blocos.push(`Valor: ${fmtMoney(valor)}`);
     if (dataVencimento) blocos.push(`Vencimento: ${fmtDate(dataVencimento)}`);
     blocos.push("");
-    if (linkBoleto) {
+    if (linkFaturaCA) {
+      blocos.push("FATURA (boleto + nota fiscal):");
+      blocos.push(linkFaturaCA);
+      blocos.push("");
+    }
+    if (linkBoleto && !linkFaturaCA) {
       blocos.push("BOLETO:");
       blocos.push(linkBoleto);
       if (linhaDigitavel) blocos.push(`Linha digitável: ${linhaDigitavel}`);
       blocos.push("");
     }
-    if (linkNf) {
+    if (linkNf && !linkFaturaCA) {
       blocos.push(`NOTA FISCAL${numeroNf ? ` Nº ${numeroNf}` : ""}:`);
       blocos.push(linkNf);
       blocos.push("");
@@ -118,11 +126,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             ${valor ? `<div><div style="color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;">Valor</div><div style="font-size:18px;font-weight:700;color:#10b981;">${fmtMoney(valor)}</div></div>` : ""}
             ${dataVencimento ? `<div><div style="color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;">Vencimento</div><div style="font-size:16px;font-weight:600;">${fmtDate(dataVencimento)}</div></div>` : ""}
           </div>` : ""}
-        ${linkBoleto ? blocoHtml("Boleto bancário", `
+        ${linkFaturaCA ? blocoHtml("Fatura (boleto + nota fiscal)", `
+          <p style="margin:0 0 6px;"><a href="${linkFaturaCA}" target="_blank" rel="noreferrer" style="color:#10b981;font-weight:600;font-size:14px;">→ Acessar fatura completa</a></p>
+          <p style="margin:0;font-size:12px;color:#64748b;">Inclui boleto, linha digitável e nota fiscal de serviço.</p>
+        `) : ""}
+        ${!linkFaturaCA && linkBoleto ? blocoHtml("Boleto bancário", `
           <p style="margin:0 0 6px;"><a href="${linkBoleto}" target="_blank" rel="noreferrer" style="color:#10b981;font-weight:600;">→ Acessar boleto</a></p>
           ${linhaDigitavel ? `<p style="margin:0;font-family:monospace;font-size:12px;background:#fff;padding:8px;border-radius:3px;word-break:break-all;">${linhaDigitavel}</p>` : ""}
         `) : ""}
-        ${linkNf ? blocoHtml(`Nota fiscal${numeroNf ? ` Nº ${numeroNf}` : ""}`, `
+        ${!linkFaturaCA && linkNf ? blocoHtml(`Nota fiscal${numeroNf ? ` Nº ${numeroNf}` : ""}`, `
           <p style="margin:0;"><a href="${linkNf}" target="_blank" rel="noreferrer" style="color:#10b981;font-weight:600;">→ Visualizar nota fiscal</a></p>
         `) : ""}
         ${linkEso ? blocoHtml("Relatório ESO", `
