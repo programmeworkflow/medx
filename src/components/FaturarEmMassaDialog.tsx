@@ -233,9 +233,27 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
   const validas = linhas.filter((l) => !l.semCadastro);
   const selecionadas = validas.filter((l) => l.selected);
   const totalSelecionado = selecionadas.reduce((s, l) => s + l.valor, 0);
+  // Aliases pra clareza nos checkboxes do header
+  const linhasValidas = validas;
+  const linhasNfElegiveis = validas.filter((l) => l.nfModo !== "nao_emite");
 
   const toggleAll = (checked: boolean) => {
     setLinhas((prev) => prev.map((l) => (l.semCadastro ? l : { ...l, selected: checked })));
+  };
+
+  // Marca/desmarca um campo (emitirNF / emitirBoleto / enviarEmail) em TODAS as linhas válidas
+  const toggleAllField = (
+    field: "emitirNF" | "emitirBoleto" | "enviarEmail",
+    checked: boolean
+  ) => {
+    setLinhas((prev) =>
+      prev.map((l) => {
+        if (l.semCadastro) return l;
+        // NF: respeita empresas configuradas como "não emite"
+        if (field === "emitirNF" && l.nfModo === "nao_emite") return l;
+        return { ...l, [field]: checked };
+      })
+    );
   };
 
   const updateLinha = (id: string, patch: Partial<Linha>) => {
@@ -542,9 +560,36 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
                 <TableHead className="text-right">Valor</TableHead>
                 <TableHead>Vencimento</TableHead>
                 <TableHead>Retenção</TableHead>
-                <TableHead className="text-center">NF</TableHead>
-                <TableHead className="text-center">Boleto</TableHead>
-                <TableHead className="text-center">E-mail</TableHead>
+                <TableHead className="text-center">
+                  <div className="flex flex-col items-center gap-1">
+                    <Checkbox
+                      checked={linhasNfElegiveis.length > 0 && linhasNfElegiveis.every((l) => l.emitirNF)}
+                      onCheckedChange={(c) => toggleAllField("emitirNF", !!c)}
+                      title="Marcar/desmarcar NF em todas (exceto empresas 'não emite')"
+                    />
+                    <span className="text-[10px] font-medium">NF</span>
+                  </div>
+                </TableHead>
+                <TableHead className="text-center">
+                  <div className="flex flex-col items-center gap-1">
+                    <Checkbox
+                      checked={linhasValidas.length > 0 && linhasValidas.every((l) => l.emitirBoleto)}
+                      onCheckedChange={(c) => toggleAllField("emitirBoleto", !!c)}
+                      title="Marcar/desmarcar Boleto em todas"
+                    />
+                    <span className="text-[10px] font-medium">Boleto</span>
+                  </div>
+                </TableHead>
+                <TableHead className="text-center">
+                  <div className="flex flex-col items-center gap-1">
+                    <Checkbox
+                      checked={linhasValidas.length > 0 && linhasValidas.every((l) => l.enviarEmail)}
+                      onCheckedChange={(c) => toggleAllField("enviarEmail", !!c)}
+                      title="Marcar/desmarcar E-mail em todas"
+                    />
+                    <span className="text-[10px] font-medium">E-mail</span>
+                  </div>
+                </TableHead>
                 <TableHead className="min-w-[200px]">Resultado</TableHead>
               </TableRow>
             </TableHeader>
