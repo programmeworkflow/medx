@@ -400,6 +400,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const cc: string[] = Array.isArray(body.cc) ? body.cc.filter(Boolean) : [];
       const todos = [...new Set([...emails, ...cc])];
 
+      // dry_run: só retorna os emails encontrados, não envia
+      if (req.query.dry_run === "1") {
+        return res.status(200).json({ ok: true, emails, customerId, dry_run: true });
+      }
+
       // 3. Monta title + content (campos certos vão DENTRO de viewOptions).
       //    CA usa HTML simples no content (com <br> pra quebra de linha).
       const numero = info.data?.number ?? info.data?.numero ?? "";
@@ -1302,6 +1307,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       let nfErro: string | null = null;
       let nfNumero: number | null = null;
       let nfInvoiceLegacyId: number | null = null;
+      let nfPdfUrl: string | null = null;
+      let nfChaveAcesso: string | null = null;
 
       if (body.emitir_nf && vendaId) {
         try {
@@ -1345,6 +1352,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               );
               const det = d.data?.data || d.data;
               nfNumero = det?.number || det?.rps?.number || null;
+              // Extrai URLs da NF (vários nomes possíveis dependendo da prefeitura)
+              nfPdfUrl =
+                det?.pdfUrl || det?.urlPdf || det?.linkPdf ||
+                det?.printUrl || det?.urlConsulta ||
+                det?.rps?.pdfUrl || det?.rps?.urlPdf ||
+                null;
+              nfChaveAcesso =
+                det?.accessKey || det?.chaveAcesso ||
+                det?.rps?.accessKey || det?.rps?.chaveAcesso ||
+                null;
               if (det?.status === "EMITIDA" || det?.status === "SUCESSO") {
                 nfStatus = "emitida";
               } else if (det?.status === "FALHA") {
@@ -1483,7 +1500,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ok: true,
         venda,
         pessoa: { id: personId, cnpj: cnpjDigits },
-        nf: { status: nfStatus, erro: nfErro, numero: nfNumero, invoice_legacy_id: nfInvoiceLegacyId },
+        nf: {
+          status: nfStatus,
+          erro: nfErro,
+          numero: nfNumero,
+          invoice_legacy_id: nfInvoiceLegacyId,
+          pdf_url: nfPdfUrl,
+          chave_acesso: nfChaveAcesso,
+        },
         boleto: {
           status: boletoStatus,
           erro: boletoErro,

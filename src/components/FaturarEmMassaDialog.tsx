@@ -308,7 +308,11 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
             vendaId: j.venda?.id,
             nf: { status: nfStatus, erro: j.nf?.erro },
             boleto: { status: boletoStatus, erro: j.boleto?.erro },
-          };
+            nfPdfUrl: j.nf?.pdf_url || null,
+            nfNumero: j.nf?.numero || null,
+            boletoUrl: j.boleto?.url || null,
+            boletoLinhaDigitavel: j.boleto?.linha_digitavel || null,
+          } as any;
         }
       } catch (e: any) {
         res = {
@@ -328,59 +332,60 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
       } catch (e) {
         console.error("Falha ao atualizar status do faturamento:", e);
       }
-      // Auto-envio de e-mail: dispara se a linha está marcada e venda OK
+      // Auto-envio de e-mail UNIFICADO: 1 email só com NF + boleto + ESO
       if (res.ok && res.vendaId && l.enviarEmail) {
         const ccArr = ccPadrao
           .split(/[,;\s]+/)
           .map((s) => s.trim())
           .filter((s) => s.includes("@"));
-        // 1. E-mail oficial via CA (sem URL — CA bloqueia)
-        let destinatariosCA: string[] = [];
+        // 1. Busca destinatários do CA (negotiator.billingContact)
+        let destinatarios: string[] = [];
         try {
-          const rEmail = await fetch("/api/contaazul/send-email-venda", {
+          const rDest = await fetch("/api/contaazul/send-email-venda?dry_run=1", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ vendaId: res.vendaId, cc: ccArr }),
+            body: JSON.stringify({ vendaId: res.vendaId }),
           });
-          const jEmail = await rEmail.json().catch(() => ({}));
-          if (!rEmail.ok || jEmail?.ok === false) {
-            const msg = jEmail?.error || `HTTP ${rEmail.status}`;
-            console.error(`[Faturar] Falha email CA pra ${l.nome}:`, msg, jEmail);
-            toast.warning(`E-mail CA não enviado pra ${l.nome}: ${msg}`);
-          } else {
-            destinatariosCA = jEmail?.emails || [];
-          }
-        } catch (e: any) {
-          console.error(`[Faturar] Erro de rede no email CA pra ${l.nome}:`, e);
+          const jDest = await rDest.json().catch(() => ({}));
+          destinatarios = (jDest?.emails || []).filter((e: string) => !ccArr.includes(e));
+        } catch {}
+        // Fallback: se não achou, usa o cc principal como destinatário
+        if (destinatarios.length === 0 && ccArr.length > 0) {
+          destinatarios = [ccArr[0]];
         }
-        // 2. E-mail Gmail SMTP com o link da fatura ESO (CA bloqueia URLs)
-        if (l.linkEso && destinatariosCA.length > 0) {
+        if (destinatarios.length === 0) {
+          toast.warning(`${l.nome}: sem destinatário (cliente sem email no CA)`);
+        } else {
           try {
-            const rLink = await fetch("/api/email/send-link", {
+            const rEmail = await fetch("/api/email/send-link", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                destinatarios: destinatariosCA.filter(
-                  (e) => !ccArr.includes(e) // tira o medwork CA do "to" (vai como cc)
-                ),
+                destinatarios,
                 cc: ccArr,
-                link: l.linkEso,
+                link_eso: l.linkEso || undefined,
+                link_boleto: res.boletoUrl || undefined,
+                linha_digitavel: res.boletoLinhaDigitavel || undefined,
+                link_nf: res.nfPdfUrl || undefined,
+                numero_nf: res.nfNumero || undefined,
+                valor: l.valor,
+                data_vencimento: l.dataVencimento || dataVencPadrao,
                 empresa_nome: l.nome,
                 numero_venda: res.vendaNumero,
               }),
             });
-            const jLink = await rLink.json().catch(() => ({}));
-            if (!rLink.ok || jLink?.ok === false) {
-              const msg = jLink?.error || `HTTP ${rLink.status}`;
-              console.error(`[Faturar] Falha Gmail link pra ${l.nome}:`, msg, jLink);
-              if (jLink?.limit_atingido) {
-                toast.warning(`${l.nome}: limite Gmail atingido (500/dia). Reenvia o link amanhã.`);
+            const jEmail = await rEmail.json().catch(() => ({}));
+            if (!rEmail.ok || jEmail?.ok === false) {
+              const msg = jEmail?.error || `HTTP ${rEmail.status}`;
+              console.error(`[Faturar] Falha email pra ${l.nome}:`, msg, jEmail);
+              if (jEmail?.limit_atingido) {
+                toast.warning(`${l.nome}: limite Gmail atingido (500/dia)`);
               } else {
-                toast.warning(`${l.nome}: link não enviado: ${msg}`);
+                toast.warning(`${l.nome}: e-mail não enviado: ${msg}`);
               }
             }
           } catch (e: any) {
-            console.error(`[Faturar] Erro de rede no Gmail link pra ${l.nome}:`, e);
+            console.error(`[Faturar] Erro de rede no email pra ${l.nome}:`, e);
           }
         }
       }

@@ -39,7 +39,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const destinatarios: string[] = Array.isArray(body.destinatarios)
       ? body.destinatarios.filter((e: string) => e && e.includes("@"))
       : [];
-    const link = String(body.link || "").trim();
+    const link = String(body.link || "").trim();              // ESO (legado/opcional)
+    const linkEso = String(body.link_eso || link || "").trim();
+    const linkBoleto = String(body.link_boleto || "").trim();
+    const linhaDigitavel = String(body.linha_digitavel || "").trim();
+    const linkNf = String(body.link_nf || "").trim();
+    const numeroNf = body.numero_nf ? String(body.numero_nf) : "";
+    const valor = body.valor ? Number(body.valor) : null;
+    const dataVencimento = String(body.data_vencimento || "").trim();
     const empresaNome = String(body.empresa_nome || "").trim();
     const numeroVenda = body.numero_venda ? String(body.numero_venda) : "";
     const cc: string[] = Array.isArray(body.cc)
@@ -49,31 +56,81 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (destinatarios.length === 0) {
       return res.status(400).json({ error: "destinatarios obrigatório (array de emails)" });
     }
-    if (!link) {
-      return res.status(400).json({ error: "link obrigatório" });
+    if (!linkEso && !linkBoleto && !linkNf && !linhaDigitavel) {
+      return res.status(400).json({ error: "informe ao menos 1 link (link_eso, link_boleto, link_nf)" });
     }
+
+    const fmtMoney = (v: number | null) =>
+      v == null ? "" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    const fmtDate = (d: string) => {
+      if (!d) return "";
+      try { return new Date(d).toLocaleDateString("pt-BR"); } catch { return d; }
+    };
 
     const t = getTransporter();
     const fromUser = process.env.GMAIL_USER!;
     const subject = numeroVenda
-      ? `Link da fatura — Venda Nº ${numeroVenda}`
-      : `Link da fatura`;
-    const text = [
-      empresaNome ? `Olá ${empresaNome},` : "Olá,",
-      "",
-      "Segue o link para acessar a sua fatura:",
-      link,
-      "",
-      "Qualquer dúvida estamos à disposição.",
-      "",
-      "— Medwork",
-    ].join("\n");
+      ? `Cobrança Medwork — Venda Nº ${numeroVenda}`
+      : `Cobrança Medwork`;
+
+    // Texto plain pra clientes de email simples
+    const blocos: string[] = [];
+    blocos.push(empresaNome ? `Olá ${empresaNome},` : "Olá,");
+    blocos.push("");
+    blocos.push("Segue a sua cobrança da Medwork:");
+    if (valor) blocos.push(`Valor: ${fmtMoney(valor)}`);
+    if (dataVencimento) blocos.push(`Vencimento: ${fmtDate(dataVencimento)}`);
+    blocos.push("");
+    if (linkBoleto) {
+      blocos.push("BOLETO:");
+      blocos.push(linkBoleto);
+      if (linhaDigitavel) blocos.push(`Linha digitável: ${linhaDigitavel}`);
+      blocos.push("");
+    }
+    if (linkNf) {
+      blocos.push(`NOTA FISCAL${numeroNf ? ` Nº ${numeroNf}` : ""}:`);
+      blocos.push(linkNf);
+      blocos.push("");
+    }
+    if (linkEso) {
+      blocos.push("RELATÓRIO ESO:");
+      blocos.push(linkEso);
+      blocos.push("");
+    }
+    blocos.push("Qualquer dúvida estamos à disposição.");
+    blocos.push("");
+    blocos.push("— Medwork");
+    const text = blocos.join("\n");
+
+    // HTML formatado, didático
+    const blocoHtml = (titulo: string, conteudo: string) =>
+      `<div style="margin:18px 0;padding:14px 16px;background:#f5f7fa;border-left:3px solid #10b981;border-radius:4px;">
+        <div style="font-size:11px;font-weight:700;color:#475569;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:6px;">${titulo}</div>
+        ${conteudo}
+      </div>`;
+
     const html = `
-      <p>${empresaNome ? `Olá <b>${empresaNome}</b>,` : "Olá,"}</p>
-      <p>Segue o link para acessar a sua fatura:</p>
-      <p><a href="${link}" target="_blank" rel="noreferrer">${link}</a></p>
-      <p>Qualquer dúvida estamos à disposição.</p>
-      <p>— Medwork</p>
+      <div style="font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;color:#0f172a;max-width:560px;margin:0 auto;padding:24px 16px;">
+        <p style="font-size:15px;">${empresaNome ? `Olá <b>${empresaNome}</b>,` : "Olá,"}</p>
+        <p style="font-size:14px;color:#475569;">Segue sua cobrança Medwork${numeroVenda ? ` referente à Venda Nº <b>${numeroVenda}</b>` : ""}.</p>
+        ${valor || dataVencimento ? `
+          <div style="display:flex;gap:24px;margin:18px 0;font-size:14px;">
+            ${valor ? `<div><div style="color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;">Valor</div><div style="font-size:18px;font-weight:700;color:#10b981;">${fmtMoney(valor)}</div></div>` : ""}
+            ${dataVencimento ? `<div><div style="color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;">Vencimento</div><div style="font-size:16px;font-weight:600;">${fmtDate(dataVencimento)}</div></div>` : ""}
+          </div>` : ""}
+        ${linkBoleto ? blocoHtml("Boleto bancário", `
+          <p style="margin:0 0 6px;"><a href="${linkBoleto}" target="_blank" rel="noreferrer" style="color:#10b981;font-weight:600;">→ Acessar boleto</a></p>
+          ${linhaDigitavel ? `<p style="margin:0;font-family:monospace;font-size:12px;background:#fff;padding:8px;border-radius:3px;word-break:break-all;">${linhaDigitavel}</p>` : ""}
+        `) : ""}
+        ${linkNf ? blocoHtml(`Nota fiscal${numeroNf ? ` Nº ${numeroNf}` : ""}`, `
+          <p style="margin:0;"><a href="${linkNf}" target="_blank" rel="noreferrer" style="color:#10b981;font-weight:600;">→ Visualizar nota fiscal</a></p>
+        `) : ""}
+        ${linkEso ? blocoHtml("Relatório ESO", `
+          <p style="margin:0;"><a href="${linkEso}" target="_blank" rel="noreferrer" style="color:#10b981;font-weight:600;">→ Acessar relatório</a></p>
+        `) : ""}
+        <p style="font-size:13px;color:#64748b;margin-top:24px;">Qualquer dúvida estamos à disposição.</p>
+        <p style="font-size:13px;color:#0f172a;font-weight:600;">— Medwork</p>
+      </div>
     `;
 
     const info = await t.sendMail({
