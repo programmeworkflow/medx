@@ -1086,6 +1086,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ok: true, resetadas: count, apenas_indefinidas: apenasIndefinidas });
     }
 
+    if (action === "debug-empresa") {
+      // Diagnóstico: mostra se a empresa local tem retem_iss
+      const cnpj = String(req.query.cnpj || "").replace(/\D/g, "");
+      if (!cnpj) return res.status(400).json({ error: "cnpj obrigatório" });
+      const sb = supaAdmin();
+      // Tenta vários formatos
+      const { data: e1 } = await sb.from("empresas").select("*").eq("cnpj", cnpj).maybeSingle();
+      const { data: e2 } = await sb.from("empresas").select("*").ilike("cnpj", `%${cnpj}%`).limit(5);
+      // Match por raw cnpj
+      const { data: todas } = await sb.from("empresas").select("id, nome_empresa, cnpj, retem_iss, regime_tributario");
+      const matching = (todas || []).filter((e: any) => String(e.cnpj || "").replace(/\D/g, "") === cnpj);
+      return res.status(200).json({
+        cnpj_buscado: cnpj,
+        match_eq_exato: e1,
+        match_ilike: e2,
+        match_normalizado: matching,
+      });
+    }
+
     if (action === "ultimas-vendas") {
       // Retorna as últimas vendas criadas com status de NF/boleto pra debug
       const sb = supaAdmin();
