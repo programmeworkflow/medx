@@ -1232,7 +1232,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           (s: any) => s.status === "ATIVO" && s.tipo_servico === "PRESTADO"
         );
         servicoId = ativoPrestado?.id;
-        servicoNomeFinal = ativoPrestado?.nome || servicoNomeFinal;
+        servicoNomeFinal = ativoPrestado?.descricao || ativoPrestado?.nome || servicoNomeFinal;
       }
       if (!servicoId) {
         throw new Error("Nenhum serviço ATIVO + PRESTADO cadastrado na Conta Azul");
@@ -1266,51 +1266,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const retemPisCofinsCsll = body.retem_pis_cofins_csll !== undefined ? !!body.retem_pis_cofins_csll : !!retencoesConfig?.retem_pis_cofins_csll;
 
       // 4.5. Se a empresa cliente RETÉM ISS, troca o serviço por uma versão
-      // "com retenção" (cadastrada manualmente no CA, ex: "Exames com retenção").
-      // Detecção por nome: serviço atual + "com retenção" / "retenção" / "retido".
+      // "com retenção" (cadastrada manualmente no CA).
+      // Detecta pares como "EXAMES OCUPACIONAIS (Com Retenção de ISS)" vs
+      // "EXAMES OCUPACIONAIS (Sem Retenção de ISS)" — mesmo nome base, sufixo diferente.
       let servicoTrocadoInfo: any = null;
+      const nomeServ = (s: any) => String(s?.descricao || s?.nome || "");
+      // Remove sufixos de retenção pra identificar nome "base" do serviço
+      const nomeBase = (nome: string) =>
+        nome
+          .toLowerCase()
+          .replace(/\(.*?retenç(?:ão|ao).*?\)/gi, "")
+          .replace(/-?\s*com\s+retenç(?:ão|ao).*$/gi, "")
+          .replace(/-?\s*sem\s+retenç(?:ão|ao).*$/gi, "")
+          .replace(/-?\s*c\/\s*retenç(?:ão|ao).*$/gi, "")
+          .replace(/-?\s*retido\b.*$/gi, "")
+          .replace(/\s+/g, " ")
+          .trim();
+      const isComRetencao = (nome: string) => {
+        const n = nome.toLowerCase();
+        return /com\s+retenç(?:ão|ao)/.test(n) ||
+               /c\/\s*retenç(?:ão|ao)/.test(n) ||
+               /\bretido\b/.test(n);
+      };
       if (retemIss) {
         try {
           const items = await carregarServicos();
           const servicoAtual = items.find((s: any) => s.id === servicoId);
-          const nomeAtual = String(servicoAtual?.nome || "").toLowerCase();
-          // Busca serviço "com retenção" cujo nome contenha o nome atual + indicador de retenção
-          const candidato = items.find((s: any) => {
-            if (s.id === servicoId) return false;
-            if (s.status !== "ATIVO") return false;
-            const nome = String(s.nome || "").toLowerCase();
-            const ehComRetencao =
-              nome.includes("com retenção") ||
-              nome.includes("com retencao") ||
-              nome.includes("c/ retenção") ||
-              nome.includes("c/ retencao") ||
-              nome.includes("c/retenção") ||
-              nome.includes("c/retencao") ||
-              nome.includes("retido") ||
-              nome.includes("retenção iss") ||
-              nome.includes("retencao iss");
-            if (!ehComRetencao) return false;
-            // Tem que ter alguma palavra em comum com o serviço original
-            // (ex: "Exames" + "Exames com retenção")
-            const palavrasAtual = nomeAtual.split(/\s+/).filter((w: string) => w.length > 3);
-            return palavrasAtual.some((w: string) => nome.includes(w));
-          });
-          if (candidato) {
-            servicoTrocadoInfo = {
-              de: { id: servicoId, nome: servicoAtual?.nome },
-              para: { id: candidato.id, nome: candidato.nome },
-            };
-            servicoId = candidato.id;
-            servicoNomeFinal = candidato.nome;
-            console.log(`[create-receivable] Empresa ${cnpjDigits} retém ISS — trocando serviço "${servicoAtual?.nome}" → "${candidato.nome}"`);
-          } else {
-            console.warn(`[create-receivable] Empresa ${cnpjDigits} retém ISS, mas não achei serviço "com retenção" pra "${servicoAtual?.nome}". Mantendo o original.`);
+          const nomeAtual = nomeServ(servicoAtual);
+          const baseAtual = nomeBase(nomeAtual);
+          if (baseAtual) {
+            const candidato = items.find((s: any) => {
+              if (s.id === servicoId) return false;
+              if (s.status !== "ATIVO") return false;
+              if (s.tipo_servico !== "PRESTADO") return false;
+              const nome = nomeServ(s);
+              if (!isComRetencao(nome)) return false;
+              return nomeBase(nome) === baseAtual;
+            });
+            if (candidato) {
+              servicoTrocadoInfo = {
+                de: { id: servicoId, nome: nomeAtual },
+                para: { id: candidato.id, nome: nomeServ(candidato) },
+              };
+              servicoId = candidato.id;
+              servicoNomeFinal = nomeServ(candidato);
+              console.log(`[create-receivable] CNPJ ${cnpjDigits} retém ISS — trocou "${nomeAtual}" → "${servicoNomeFinal}"`);
+            } else {
+              console.warn(`[create-receivable] CNPJ ${cnpjDigits} retém ISS, mas não achei versão "com retenção" pra base "${baseAtual}" (orig: "${nomeAtual}"). Mantendo original.`);
+            }
           }
-        } catch (e) {
-          console.error(`[create-receivable] Falha ao trocar serviço por versão com retenção:`, e);
+        } catch (e: any) {
+          console.error(`[create-receivable] Falha ao trocar serviço por versão com retenção:`, e?.message);
         }
       }
-      // Atualiza body.servico se o nome mudou (pra ir certo na NF/observação)
       if (servicoTrocadoInfo) {
         body.servico = servicoNomeFinal;
       }
