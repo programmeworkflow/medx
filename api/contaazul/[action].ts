@@ -1216,15 +1216,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         } catch (_) {}
       }
 
-      // 4. Resolve serviço ATIVO + PRESTADO (Receita de Serviço exige serviço ativo)
+      // 4. Resolve serviço ATIVO + PRESTADO
       let servicoId = body.servico_id as string | undefined;
-      if (!servicoId) {
+      let servicoNomeFinal: string = body.servico || "";
+      let svcsCache: any[] | null = null;
+      const carregarServicos = async () => {
+        if (svcsCache) return svcsCache;
         const svcs = await caApi("GET", "/v1/servicos?perPage=200");
-        const items = svcs?.itens || svcs?.items || [];
+        svcsCache = svcs?.itens || svcs?.items || [];
+        return svcsCache!;
+      };
+      if (!servicoId) {
+        const items = await carregarServicos();
         const ativoPrestado = items.find(
           (s: any) => s.status === "ATIVO" && s.tipo_servico === "PRESTADO"
         );
         servicoId = ativoPrestado?.id;
+        servicoNomeFinal = ativoPrestado?.nome || servicoNomeFinal;
       }
       if (!servicoId) {
         throw new Error("Nenhum serviço ATIVO + PRESTADO cadastrado na Conta Azul");
@@ -1256,6 +1264,56 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const retemIr = body.retem_ir !== undefined ? !!body.retem_ir : !!retencoesConfig?.retem_ir;
       const retemInss = body.retem_inss !== undefined ? !!body.retem_inss : !!retencoesConfig?.retem_inss;
       const retemPisCofinsCsll = body.retem_pis_cofins_csll !== undefined ? !!body.retem_pis_cofins_csll : !!retencoesConfig?.retem_pis_cofins_csll;
+
+      // 4.5. Se a empresa cliente RETÉM ISS, troca o serviço por uma versão
+      // "com retenção" (cadastrada manualmente no CA, ex: "Exames com retenção").
+      // Detecção por nome: serviço atual + "com retenção" / "retenção" / "retido".
+      let servicoTrocadoInfo: any = null;
+      if (retemIss) {
+        try {
+          const items = await carregarServicos();
+          const servicoAtual = items.find((s: any) => s.id === servicoId);
+          const nomeAtual = String(servicoAtual?.nome || "").toLowerCase();
+          // Busca serviço "com retenção" cujo nome contenha o nome atual + indicador de retenção
+          const candidato = items.find((s: any) => {
+            if (s.id === servicoId) return false;
+            if (s.status !== "ATIVO") return false;
+            const nome = String(s.nome || "").toLowerCase();
+            const ehComRetencao =
+              nome.includes("com retenção") ||
+              nome.includes("com retencao") ||
+              nome.includes("c/ retenção") ||
+              nome.includes("c/ retencao") ||
+              nome.includes("c/retenção") ||
+              nome.includes("c/retencao") ||
+              nome.includes("retido") ||
+              nome.includes("retenção iss") ||
+              nome.includes("retencao iss");
+            if (!ehComRetencao) return false;
+            // Tem que ter alguma palavra em comum com o serviço original
+            // (ex: "Exames" + "Exames com retenção")
+            const palavrasAtual = nomeAtual.split(/\s+/).filter((w: string) => w.length > 3);
+            return palavrasAtual.some((w: string) => nome.includes(w));
+          });
+          if (candidato) {
+            servicoTrocadoInfo = {
+              de: { id: servicoId, nome: servicoAtual?.nome },
+              para: { id: candidato.id, nome: candidato.nome },
+            };
+            servicoId = candidato.id;
+            servicoNomeFinal = candidato.nome;
+            console.log(`[create-receivable] Empresa ${cnpjDigits} retém ISS — trocando serviço "${servicoAtual?.nome}" → "${candidato.nome}"`);
+          } else {
+            console.warn(`[create-receivable] Empresa ${cnpjDigits} retém ISS, mas não achei serviço "com retenção" pra "${servicoAtual?.nome}". Mantendo o original.`);
+          }
+        } catch (e) {
+          console.error(`[create-receivable] Falha ao trocar serviço por versão com retenção:`, e);
+        }
+      }
+      // Atualiza body.servico se o nome mudou (pra ir certo na NF/observação)
+      if (servicoTrocadoInfo) {
+        body.servico = servicoNomeFinal;
+      }
 
       const buildPayload = (numero: number) => ({
         id_cliente: personId,
@@ -1531,6 +1589,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           pdf_url: nfPdfUrl,
           chave_acesso: nfChaveAcesso,
         },
+        servico_trocado_iss: servicoTrocadoInfo,
         boleto: {
           status: boletoStatus,
           erro: boletoErro,
