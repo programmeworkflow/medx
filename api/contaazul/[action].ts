@@ -1135,6 +1135,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    if (action === "diagnostico-erros") {
+      // Lista faturamentos com status ca_error e cruza com vendas do CA
+      // pra ver se foram faturadas manualmente depois.
+      const competencia_id = (req.query.competencia_id as string) || undefined;
+      const sb = supaAdmin();
+      let q = sb.from("faturamentos").select("*").eq("status", "ca_error");
+      if (competencia_id) q = q.eq("competencia_id", competencia_id);
+      const { data: erros } = await q;
+      // Pega vendas no CA já registradas localmente
+      const cnpjs = (erros || []).map((e: any) => String(e.cnpj_snapshot || "").replace(/\D/g, "")).filter(Boolean);
+      const { data: vendasCA } = await sb
+        .from("contaazul_vendas")
+        .select("ca_venda_id, cnpj, valor, data_venda, raw, nf_status, nf_numero")
+        .in("cnpj", cnpjs);
+      // Cruza
+      const vendasPorCnpj = new Map<string, any[]>();
+      for (const v of vendasCA || []) {
+        const k = String(v.cnpj || "").replace(/\D/g, "");
+        if (!vendasPorCnpj.has(k)) vendasPorCnpj.set(k, []);
+        vendasPorCnpj.get(k)!.push(v);
+      }
+      const resultado = (erros || []).map((f: any) => {
+        const cnpj = String(f.cnpj_snapshot || "").replace(/\D/g, "");
+        const vendas = vendasPorCnpj.get(cnpj) || [];
+        // Vendas do mesmo valor (provavelmente foram essas)
+        const valorMatch = vendas.filter((v: any) => Math.abs(Number(v.valor || 0) - Number(f.valor || 0)) < 0.01);
+        return {
+          faturamento_id: f.id,
+          empresa: f.nome_empresa_snapshot,
+          cnpj: f.cnpj_snapshot,
+          valor: f.valor,
+          status: f.status,
+          ja_faturado_no_ca: valorMatch.length > 0,
+          vendas_ca_match: valorMatch.map((v: any) => ({
+            numero: v.raw?.venda?.numero,
+            id: v.ca_venda_id,
+            valor: v.valor,
+            data: v.data_venda,
+            nf: v.nf_status,
+            nf_num: v.nf_numero,
+          })),
+        };
+      });
+      return res.status(200).json({
+        ok: true,
+        total_erros: resultado.length,
+        ja_faturados: resultado.filter((r: any) => r.ja_faturado_no_ca).length,
+        a_refaturar: resultado.filter((r: any) => !r.ja_faturado_no_ca).length,
+        items: resultado,
+      });
+    }
+
     if (action === "ultimas-vendas") {
       // Retorna as últimas vendas criadas com status de NF/boleto pra debug
       const sb = supaAdmin();

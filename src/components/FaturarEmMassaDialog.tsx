@@ -65,6 +65,7 @@ interface Linha {
   categoria: string;
   valor: number;
   semCadastro: boolean;
+  errouAntes?: boolean;
   nfModo: NfModo;
   linkEso: string | null;
   // editáveis
@@ -165,7 +166,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
   useEffect(() => {
     if (!faturamentos.length) return;
     const novas: Linha[] = (faturamentos as any[])
-      .filter((f) => f.status === "pendente" || f.status === "sem_cadastro")
+      .filter((f) => f.status === "pendente" || f.status === "sem_cadastro" || f.status === "ca_error")
       .map((f) => {
         const empresa = empresasById.get(f.empresa_executora_id) as any;
         const semCadastro = f.status === "sem_cadastro";
@@ -198,6 +199,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
             : empresa?.emitir_nf_padrao
             ? "automatica"
             : "manual";
+        const errouAntes = f.status === "ca_error";
         return {
           faturamentoId: f.id,
           empresaId: f.empresa_executora_id,
@@ -206,6 +208,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
           categoria: empresa?.categoria ?? "?",
           valor: Number(f.valor) || 0,
           semCadastro,
+          errouAntes,
           nfModo,
           linkEso: f.link_relatorio_eso ?? null,
           selected: !semCadastro,
@@ -610,6 +613,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
                   <TableCell className="font-medium">
                     {l.nome}
                     {l.semCadastro && <Badge variant="outline" className="ml-2 text-xs">sem cadastro</Badge>}
+                    {l.errouAntes && <Badge variant="destructive" className="ml-2 text-xs">⚠ erro anterior</Badge>}
                     {l.categoria === "credenciada" && <Badge variant="secondary" className="ml-2 text-xs">credenciada</Badge>}
                   </TableCell>
                   <TableCell className="font-mono text-xs">{formatCnpjCpf(l.cnpj)}</TableCell>
