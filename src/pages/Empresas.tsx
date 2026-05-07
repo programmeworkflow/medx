@@ -234,6 +234,7 @@ export default function Empresas() {
       return;
     }
     const cnpjLimpo = onlyDigits(cnpj);
+    console.log('[handleSave] categoria selecionada:', categoria);
     const payload: any = {
       nome_empresa: nome,
       cnpj: cnpjLimpo,

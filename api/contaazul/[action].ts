@@ -1216,6 +1216,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ok: true, total: items.length, por_categoria: porCategoria, items });
     }
 
+    if (action === "ultimas-empresas") {
+      // Mostra últimas empresas cadastradas pra debug de categoria
+      const sb = supaAdmin();
+      const { data } = await sb
+        .from("empresas")
+        .select("id, nome_empresa, cnpj, categoria, criado_em")
+        .order("criado_em", { ascending: false })
+        .limit(10);
+      return res.status(200).json({ ok: true, items: data });
+    }
+
     if (action === "diagnostico-erros") {
       // Lista faturamentos com status ca_error e cruza com vendas do CA
       // pra ver se foram faturadas manualmente depois.
