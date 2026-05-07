@@ -83,6 +83,15 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
   const [open, setOpen] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
+  // Filtros da tabela
+  const [filtroBusca, setFiltroBusca] = useState("");
+  const [filtroCategoria, setFiltroCategoria] = useState<string>("all");
+  const [filtroRetencao, setFiltroRetencao] = useState<string>("all");
+  const [filtroValorMin, setFiltroValorMin] = useState("");
+  const [filtroValorMax, setFiltroValorMax] = useState("");
+  const [filtroExcluirZero, setFiltroExcluirZero] = useState(true);
+  const [filtroStatus, setFiltroStatus] = useState<string>("all");
+
   const { data: competencias = [] } = useQuery({ queryKey: ["competencias"], queryFn: fetchCompetencias });
   // Competência selecionada — default = aberta (ou mais recente)
   const [compId, setCompId] = useState<string>("");
@@ -233,26 +242,64 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
   };
 
   const semCadastroList = linhas.filter((l) => l.semCadastro);
-  const validas = linhas.filter((l) => !l.semCadastro);
+
+  // Aplica filtros nas linhas válidas
+  const norm = (s: string) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const buscaN = norm(filtroBusca);
+  const vMin = parseFloat(filtroValorMin.replace(",", ".")) || 0;
+  const vMax = parseFloat(filtroValorMax.replace(",", ".")) || Infinity;
+  const validas = linhas.filter((l) => {
+    if (l.semCadastro) return false;
+    if (filtroExcluirZero && l.valor === 0) return false;
+    if (vMin && l.valor < vMin) return false;
+    if (vMax !== Infinity && l.valor > vMax) return false;
+    if (filtroCategoria !== "all" && l.categoria !== filtroCategoria) return false;
+    if (filtroRetencao !== "all" && l.retencao !== filtroRetencao) return false;
+    if (filtroStatus === "erro_anterior" && !l.errouAntes) return false;
+    if (filtroStatus === "normal" && l.errouAntes) return false;
+    if (buscaN) {
+      const cnpjDig = String(l.cnpj || "").replace(/\D/g, "");
+      const buscaDig = filtroBusca.replace(/\D/g, "");
+      const matchNome = norm(l.nome).includes(buscaN);
+      const matchCnpj = buscaDig.length > 0 && cnpjDig.includes(buscaDig);
+      if (!matchNome && !matchCnpj) return false;
+    }
+    return true;
+  });
   const selecionadas = validas.filter((l) => l.selected);
   const totalSelecionado = selecionadas.reduce((s, l) => s + l.valor, 0);
-  // Aliases pra clareza nos checkboxes do header
   const linhasValidas = validas;
   const linhasNfElegiveis = validas.filter((l) => l.nfModo !== "nao_emite");
+  const totalSemFiltro = linhas.filter((l) => !l.semCadastro).length;
+  const filtroAtivo =
+    filtroBusca || filtroCategoria !== "all" || filtroRetencao !== "all" ||
+    filtroValorMin || filtroValorMax || !filtroExcluirZero || filtroStatus !== "all";
 
-  const toggleAll = (checked: boolean) => {
-    setLinhas((prev) => prev.map((l) => (l.semCadastro ? l : { ...l, selected: checked })));
+  const limparFiltros = () => {
+    setFiltroBusca("");
+    setFiltroCategoria("all");
+    setFiltroRetencao("all");
+    setFiltroValorMin("");
+    setFiltroValorMax("");
+    setFiltroExcluirZero(true);
+    setFiltroStatus("all");
   };
 
-  // Marca/desmarca um campo (emitirNF / emitirBoleto / enviarEmail) em TODAS as linhas válidas
+  const idsFiltrados = new Set(validas.map((l) => l.id));
+  const toggleAll = (checked: boolean) => {
+    setLinhas((prev) =>
+      prev.map((l) => (l.semCadastro || !idsFiltrados.has(l.id) ? l : { ...l, selected: checked }))
+    );
+  };
+
+  // Marca/desmarca um campo (emitirNF / emitirBoleto / enviarEmail) só nas linhas filtradas
   const toggleAllField = (
     field: "emitirNF" | "emitirBoleto" | "enviarEmail",
     checked: boolean
   ) => {
     setLinhas((prev) =>
       prev.map((l) => {
-        if (l.semCadastro) return l;
-        // NF: respeita empresas configuradas como "não emite"
+        if (l.semCadastro || !idsFiltrados.has(l.id)) return l;
         if (field === "emitirNF" && l.nfModo === "nao_emite") return l;
         return { ...l, [field]: checked };
       })
@@ -567,9 +614,92 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
           </div>
           <div className="space-y-1 flex flex-col justify-end">
             <Badge variant="secondary" className="self-start">
-              {selecionadas.length} de {validas.length} | Total: {fmtBRL(totalSelecionado)}
+              {selecionadas.length} de {validas.length} de {totalSemFiltro} | Total: {fmtBRL(totalSelecionado)}
             </Badge>
           </div>
+        </div>
+
+        {/* Barra de filtros */}
+        <div className="flex flex-wrap items-end gap-2 px-1 pb-1 border-b">
+          <div className="space-y-1 flex-1 min-w-[200px]">
+            <Label className="text-xs">Buscar (nome ou CNPJ)</Label>
+            <Input
+              type="text"
+              className="h-9"
+              value={filtroBusca}
+              onChange={(e) => setFiltroBusca(e.target.value)}
+              placeholder="Ex: Acme ou 12.345.678/..."
+            />
+          </div>
+          <div className="space-y-1 min-w-[140px]">
+            <Label className="text-xs">Categoria</Label>
+            <Select value={filtroCategoria} onValueChange={setFiltroCategoria}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas</SelectItem>
+                {Array.from(new Set(linhas.filter((l) => !l.semCadastro && l.categoria).map((l) => l.categoria))).sort().map((c) => (
+                  <SelectItem key={c} value={c!}>{c}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1 min-w-[140px]">
+            <Label className="text-xs">Retenção</Label>
+            <Select value={filtroRetencao} onValueChange={setFiltroRetencao}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas</SelectItem>
+                {Array.from(new Set(linhas.filter((l) => !l.semCadastro && l.retencao).map((l) => l.retencao))).sort().map((r) => (
+                  <SelectItem key={r} value={r!}>{r}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1 w-[110px]">
+            <Label className="text-xs">Valor mín.</Label>
+            <Input
+              type="number"
+              step="0.01"
+              className="h-9"
+              value={filtroValorMin}
+              onChange={(e) => setFiltroValorMin(e.target.value)}
+              placeholder="0,00"
+            />
+          </div>
+          <div className="space-y-1 w-[110px]">
+            <Label className="text-xs">Valor máx.</Label>
+            <Input
+              type="number"
+              step="0.01"
+              className="h-9"
+              value={filtroValorMax}
+              onChange={(e) => setFiltroValorMax(e.target.value)}
+              placeholder="∞"
+            />
+          </div>
+          <div className="space-y-1 min-w-[140px]">
+            <Label className="text-xs">Status</Label>
+            <Select value={filtroStatus} onValueChange={setFiltroStatus}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="normal">Sem erro</SelectItem>
+                <SelectItem value="erro_anterior">Com erro anterior</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <label className="flex items-center gap-2 h-9 px-2 text-sm cursor-pointer select-none">
+            <Checkbox
+              checked={filtroExcluirZero}
+              onCheckedChange={(c) => setFiltroExcluirZero(!!c)}
+            />
+            Excluir R$ 0,00
+          </label>
+          {filtroAtivo && (
+            <Button type="button" variant="ghost" size="sm" className="h-9" onClick={limparFiltros}>
+              Limpar filtros
+            </Button>
+          )}
         </div>
 
         <div className="border rounded-lg overflow-x-auto">
@@ -621,7 +751,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
               </TableRow>
             </TableHeader>
             <TableBody>
-              {linhas.map((l) => (
+              {(filtroAtivo ? validas : [...validas, ...semCadastroList]).map((l) => (
                 <TableRow
                   key={l.faturamentoId}
                   className={l.semCadastro ? "opacity-50" : ""}
