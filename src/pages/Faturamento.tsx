@@ -165,11 +165,10 @@ export default function Faturamento() {
       const cnpjNorm = normalizeCnpj(exec.cnpj);
       const escolhida = escolherCadastro(cnpjNorm, exec.id);
       if (!escolhida) continue;
-      // Só atualiza se: (a) achou cadastro real (categoria != medwork) ou
-      // (b) a empresa atual mudou de categoria (não é mais placeholder)
-      const ehReal = escolhida.categoria !== "medwork";
-      const idMudou = escolhida.id !== exec.id;
-      if (!ehReal && !idMudou) continue;
+      // Atualiza sempre que achou um cadastro pelo CNPJ — mesmo se categoria
+      // ficou medwork (default do form). Antes essa condição só aceitava
+      // categoria não-medwork, o que travava em cadastros novos.
+      void escolhida;
       await supabase.from("faturamentos").update({
         status: "pendente",
         categoria_snapshot: escolhida.categoria,
