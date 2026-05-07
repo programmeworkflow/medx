@@ -1165,6 +1165,57 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ok: true, atualizados });
     }
 
+    if (action === "motivos-erros") {
+      // Pra cada faturamento ca_error, tenta achar o motivo cruzando com
+      // contaazul_vendas (criadas mas com nf_erro) e analisando padrões.
+      const sb = supaAdmin();
+      const { data: erros } = await sb.from("faturamentos").select("*").eq("status", "ca_error");
+      const empIds = Array.from(new Set((erros || []).map((e: any) => e.empresa_executora_id).filter(Boolean)));
+      const { data: empresas } = await sb.from("empresas").select("id, nome_empresa, cnpj").in("id", empIds);
+      const empById = new Map((empresas || []).map((e: any) => [e.id, e]));
+      // Pega vendas no CA que possam corresponder
+      const cnpjs = (erros || []).map((e: any) => {
+        return String(e.cnpj_snapshot || empById.get(e.empresa_executora_id)?.cnpj || "").replace(/\D/g, "");
+      }).filter(Boolean);
+      const { data: vendasCA } = await sb.from("contaazul_vendas")
+        .select("cnpj, valor, nf_status, nf_erro, boleto_status, boleto_erro, created_at")
+        .in("cnpj", cnpjs)
+        .order("created_at", { ascending: false });
+      const vendasPorCnpj = new Map<string, any[]>();
+      for (const v of vendasCA || []) {
+        const k = String(v.cnpj || "").replace(/\D/g, "");
+        if (!vendasPorCnpj.has(k)) vendasPorCnpj.set(k, []);
+        vendasPorCnpj.get(k)!.push(v);
+      }
+      const items = (erros || []).map((f: any) => {
+        const emp = empById.get(f.empresa_executora_id);
+        const cnpj = String((f.cnpj_snapshot || emp?.cnpj || "")).replace(/\D/g, "");
+        const nome = f.nome_empresa_snapshot || emp?.nome_empresa || "?";
+        const vendas = vendasPorCnpj.get(cnpj) || [];
+        // Match por valor — venda criada mas falhou na NF/boleto
+        const valorMatch = vendas.find((v: any) => Math.abs(Number(v.valor || 0) - Number(f.valor || 0)) < 0.01);
+        let motivo = "venda nao criada (erro antes do CA)";
+        let categoria = "front_or_auth";
+        if (valorMatch) {
+          if (valorMatch.nf_erro) {
+            motivo = `NF: ${String(valorMatch.nf_erro).slice(0, 200)}`;
+            categoria = "nf_erro";
+          } else if (valorMatch.boleto_erro) {
+            motivo = `Boleto: ${String(valorMatch.boleto_erro).slice(0, 200)}`;
+            categoria = "boleto_erro";
+          } else {
+            motivo = `Venda criada (#${valorMatch.numero || "?"}) mas status: NF=${valorMatch.nf_status}, Boleto=${valorMatch.boleto_status}`;
+            categoria = "venda_criada";
+          }
+        }
+        return { nome, cnpj, valor: f.valor, motivo, categoria };
+      });
+      // Agrega
+      const porCategoria: Record<string, number> = {};
+      for (const i of items) porCategoria[i.categoria] = (porCategoria[i.categoria] || 0) + 1;
+      return res.status(200).json({ ok: true, total: items.length, por_categoria: porCategoria, items });
+    }
+
     if (action === "diagnostico-erros") {
       // Lista faturamentos com status ca_error e cruza com vendas do CA
       // pra ver se foram faturadas manualmente depois.
