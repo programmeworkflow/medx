@@ -640,14 +640,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (action === "cost-centers") {
-      // Lista centros de custo com filtro opcional ?busca=
+      // Lista centros de custo paginando — CA ignora perPage e retorna 10 por
+      // página por padrão; usa tamanho_pagina e itera até esgotar.
       const busca = (req.query.busca as string) || "";
-      const r = await caApi(
-        "GET",
-        busca ? `/v1/centro-de-custo?busca=${encodeURIComponent(busca)}` : "/v1/centro-de-custo?perPage=100"
-      );
+      const accumulated: any[] = [];
+      for (let pagina = 1; pagina <= 20; pagina++) {
+        const qs = new URLSearchParams({ pagina: String(pagina), tamanho_pagina: "100" });
+        if (busca) qs.set("busca", busca);
+        const r = await caApi("GET", `/v1/centro-de-custo?${qs}`);
+        const items = r?.itens || r?.items || (Array.isArray(r) ? r : []);
+        if (!items.length) break;
+        accumulated.push(...items);
+        if (items.length < 100) break;
+      }
       return res.status(200).json({
-        items: (r?.itens || []).map((c: any) => ({ id: c.id, nome: c.nome })),
+        items: accumulated
+          .map((c: any) => ({ id: c.id, nome: c.nome }))
+          .sort((a: any, b: any) => (a.nome || "").localeCompare(b.nome || "")),
       });
     }
 
