@@ -1143,7 +1143,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       let q = sb.from("faturamentos").select("*").eq("status", "ca_error");
       if (competencia_id) q = q.eq("competencia_id", competencia_id);
       const { data: erros } = await q;
-      // Pega vendas no CA já registradas localmente
+      // Resolve nomes via empresa_executora_id quando snapshot vier null
+      const empIds = Array.from(new Set((erros || []).map((e: any) => e.empresa_executora_id).filter(Boolean)));
+      const { data: empresas } = await sb.from("empresas").select("id, nome_empresa, cnpj").in("id", empIds);
+      const empById = new Map((empresas || []).map((e: any) => [e.id, e]));
+      // Enriquece erros com snapshot quando faltava
+      for (const e of erros || []) {
+        if (!e.cnpj_snapshot || !e.nome_empresa_snapshot) {
+          const emp = empById.get(e.empresa_executora_id);
+          if (emp) {
+            e.cnpj_snapshot = e.cnpj_snapshot || emp.cnpj;
+            e.nome_empresa_snapshot = e.nome_empresa_snapshot || emp.nome_empresa;
+          }
+        }
+      }
       const cnpjs = (erros || []).map((e: any) => String(e.cnpj_snapshot || "").replace(/\D/g, "")).filter(Boolean);
       const { data: vendasCA } = await sb
         .from("contaazul_vendas")
