@@ -32,7 +32,6 @@ export default function Importacao() {
     found: number;
     newCompanies: number;
     total: number;
-    centavosCorrigidos?: number;
     inserts_falhos?: number;
     erros?: string[];
     competenciaId?: string;
@@ -95,43 +94,40 @@ export default function Importacao() {
       const empresas = await fetchEmpresas();
       const empresasByCnpj = new Map(empresas.map((e) => [normalizeCnpj(e.cnpj), e]));
 
-      // Detecta planilha do ESO pelo domínio do link de fatura — quando é ESO,
-      // o "Valor Unitário*" vem como inteiro em centavos (ex: 30700 = R$ 307,00).
-      const isEsoExport = rows.some((r) => {
-        const link = String(r["Link"] || r["link"] || "");
-        return /sistemaeso\.com\.br/i.test(link);
-      });
-
-      // Heurística adicional: se TODOS os valores numéricos forem inteiros
-      // (sem casa decimal) E pelo menos um for >= 100, a planilha provavelmente
-      // está em centavos — divide por 100. Cobre planilhas que não vêm do ESO
-      // mas seguem o mesmo padrão (ex: exportações genéricas que serializam
-      // moeda como inteiro de centavos).
-      let todosInteirosNaoZero = true;
-      let temGrande = false;
-      let temNumero = false;
-      for (const r of rows) {
-        const raw = r["Valor Unitário*"] || r["Valor"] || r["valor"];
-        if (raw == null || raw === "") continue;
-        if (typeof raw === "number" && !isNaN(raw) && raw > 0) {
-          temNumero = true;
-          if (!Number.isInteger(raw)) {
-            todosInteirosNaoZero = false;
-            break;
+      // Parser de valor: aceita número nativo do Excel ou texto BR/US.
+      // Não faz mais divisão por centavos — a planilha vem com valor já em reais.
+      // Suporta: 2000 → 2000 | "2.000,00" → 2000 | "R$ 8.500,50" → 8500.50
+      //         | "80,00" → 80 | "8000.50" → 8000.50 | "1,234.56" (US) → 1234.56
+      const parseValor = (raw: unknown): number => {
+        if (raw == null || raw === "") return 0;
+        if (typeof raw === "number") return isNaN(raw) ? 0 : raw;
+        let s = String(raw).trim().replace(/R\$\s?/i, "").replace(/\s/g, "");
+        if (!s) return 0;
+        const temVirgula = s.includes(",");
+        const temPonto = s.includes(".");
+        if (temVirgula && temPonto) {
+          // Decide qual é o decimal pela última ocorrência
+          const ultVirg = s.lastIndexOf(",");
+          const ultPonto = s.lastIndexOf(".");
+          if (ultVirg > ultPonto) {
+            // BR: "8.500,50" → remove pontos, troca vírgula por ponto
+            s = s.replace(/\./g, "").replace(",", ".");
+          } else {
+            // US: "8,500.50" → remove vírgulas
+            s = s.replace(/,/g, "");
           }
-          if (raw >= 100) temGrande = true;
-        } else if (typeof raw === "string" && raw.includes(",")) {
-          // Já tem decimal explícito ("80,00") — não é centavos
-          todosInteirosNaoZero = false;
-          break;
+        } else if (temVirgula) {
+          // Só vírgula → assume decimal BR ("80,00")
+          s = s.replace(",", ".");
         }
-      }
-      const looksLikeCentavos = isEsoExport || (temNumero && todosInteirosNaoZero && temGrande);
+        // Só ponto ou nenhum separador: parseFloat resolve
+        const n = parseFloat(s);
+        return isNaN(n) ? 0 : n;
+      };
 
       let found = 0;
       let newCompanies = 0;
       let total = 0;
-      let centavosCorrigidos = 0;
       let inserts_falhos = 0;
       const erros: string[] = [];
 
@@ -139,29 +135,8 @@ export default function Importacao() {
         // Map columns by header name (with fallbacks for different ESO formats)
         const rawCnpj = row["Documento (CPF/CNPJ)*"] || row["Documento"] || row["CNPJ"] || row["cnpj"] || row["CNPJ/CPF"];
         const nomeEmpresa = row["Responsável*"] || row["Responsável"] || row["Empregador"] || row["Empresa"] || row["empresa"];
-        const rawValor = row["Valor Unitário*"] || row["Valor"] || row["valor"] || "0";
-        const valorStr = String(rawValor).trim();
-        let valor = 0;
-        if (typeof rawValor === "number" && !isNaN(rawValor)) {
-          // Inteiros vêm em centavos quando a planilha é do ESO ou foi
-          // detectada como centavos pela heurística (todos inteiros + ≥100)
-          if (looksLikeCentavos && Number.isInteger(rawValor)) {
-            valor = rawValor / 100;
-            if (rawValor > 0) centavosCorrigidos++;
-          } else {
-            valor = rawValor;
-          }
-        } else {
-          // Texto: limpa "R$", espaços, separadores brasileiros (ponto = milhar,
-          // vírgula = decimal). Cobre "R$ 80,00", "80,00", "8.000,00", "80.00".
-          const limpo = valorStr.replace(/R\$\s?/i, "").replace(/\s/g, "");
-          if (limpo.includes(",")) {
-            valor = parseFloat(limpo.replace(/\./g, "").replace(",", "."));
-          } else {
-            valor = parseFloat(limpo);
-          }
-        }
-        if (isNaN(valor)) valor = 0;
+        const rawValor = row["Valor Unitário*"] ?? row["Valor"] ?? row["valor"] ?? 0;
+        const valor = parseValor(rawValor);
         const linkEso = row["Link"] || row["link"] || null;
 
         if (!rawCnpj || !nomeEmpresa) {
@@ -248,15 +223,11 @@ export default function Importacao() {
       queryClient.invalidateQueries({ queryKey: ["faturamentos"] });
       queryClient.invalidateQueries({ queryKey: ["empresas"] });
       queryClient.invalidateQueries({ queryKey: ["competencias"] });
-      setResult({ found, newCompanies, total, centavosCorrigidos, inserts_falhos, erros, competenciaId });
-      const msgCentavos =
-        centavosCorrigidos > 0
-          ? ` · ${centavosCorrigidos} valor(es) ajustado(s) de centavos pra reais`
-          : "";
+      setResult({ found, newCompanies, total, inserts_falhos, erros, competenciaId });
       if (inserts_falhos > 0) {
         toast.error(`${total} processadas, mas ${inserts_falhos} insert(s) falharam — ver detalhes no card abaixo`);
       } else {
-        toast.success(`${total} empresas processadas!${msgCentavos}`);
+        toast.success(`${total} empresas processadas!`);
       }
     } catch (err: any) {
       toast.error("Erro ao processar: " + err.message);
@@ -377,11 +348,6 @@ export default function Importacao() {
                   <p className="text-sm text-muted-foreground">
                     {result.total} empresas processadas • {result.found} com cadastro • {result.newCompanies} sem cadastro (precisam ser classificadas)
                   </p>
-                  {result.centavosCorrigidos ? (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      💡 Detectei valores em centavos — {result.centavosCorrigidos} valor(es) ajustado(s) (÷100)
-                    </p>
-                  ) : null}
                   {result.inserts_falhos && result.inserts_falhos > 0 ? (
                     <div className="mt-2 p-2 rounded bg-destructive/10 border border-destructive/30">
                       <p className="text-xs font-medium text-destructive">
