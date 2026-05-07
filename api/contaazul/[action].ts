@@ -1086,6 +1086,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ok: true, resetadas: count, apenas_indefinidas: apenasIndefinidas });
     }
 
+    if (action === "nf-debug-issue") {
+      // Faz issue mas NÃO transmite — pra debug do PATCH com retenções
+      const venda_id = String(req.query.venda_id || "");
+      if (!venda_id) return res.status(400).json({ error: "venda_id obrigatório" });
+      const info = await caBffSession("GET", `https://services.contaazul.com/contaazul-bff/sale/v1/sales/${venda_id}`);
+      const legacyId = info.data?.legacyId;
+      if (!legacyId) return res.status(400).json({ error: "legacyId não encontrado" });
+      const issue = await caBffSession("POST", `https://services.contaazul.com/app/serviceinvoice/v2/issue/sale/${legacyId}`, {});
+      const nfLegacy = issue.data?.data || issue.data?.id;
+      if (!nfLegacy) return res.status(500).json({ error: "issue falhou", text: issue.text });
+      // Pega detalhe da NF rascunho
+      const detalhe = await caBffSession("GET", `https://services.contaazul.com/app/serviceinvoice/v2/${nfLegacy}`);
+      return res.status(200).json({ ok: true, nf_legacy: nfLegacy, detalhe: detalhe.data });
+    }
+
+    if (action === "nf-debug-patch") {
+      // Tenta PATCH/PUT numa NF rascunho com retenções federais
+      const nfLegacy = String(req.query.nf_legacy || "");
+      const transmit = req.query.transmit === "1";
+      if (!nfLegacy) return res.status(400).json({ error: "nf_legacy obrigatório" });
+      const method = (req.query.m as string) || "PUT";
+      const body = req.body || {};
+      const r = await caBffSession(method, `https://services.contaazul.com/app/serviceinvoice/v2/${nfLegacy}`, body);
+      if (transmit && r.ok) {
+        const t = await caBffSession("PUT", `https://services.contaazul.com/app/serviceinvoice/v2/${nfLegacy}/transmit`, {});
+        return res.status(200).json({ patch: r, transmit: t });
+      }
+      return res.status(200).json(r);
+    }
+
     if (action === "debug-empresa") {
       // Diagnóstico: mostra se a empresa local tem retem_iss
       const cnpj = String(req.query.cnpj || "").replace(/\D/g, "");
