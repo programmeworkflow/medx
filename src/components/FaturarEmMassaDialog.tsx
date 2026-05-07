@@ -362,7 +362,22 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
         console.error("Falha ao atualizar status do faturamento:", e);
       }
       // Auto-envio de e-mail UNIFICADO: 1 email só com NF + boleto + ESO
-      if (res.ok && res.vendaId && l.enviarEmail) {
+      // Gate de email: SÓ envia se TUDO QUE FOI PEDIDO foi entregue.
+      // Se pediu NF e ela falhou/não foi solicitada → NÃO envia (cliente
+      // receberia email "segue NF" sem NF). Mesmo pra boleto.
+      const nfStatus = res.nf?.status || "";
+      const boletoStatus = res.boleto?.status || "";
+      const nfOk = !l.emitirNF || ["emitida", "em_processamento", "aguardando_retorno"].includes(nfStatus);
+      const boletoOk = !l.emitirBoleto || ["emitido", "ja_emitido", "solicitado", "aguardando_confirmacao"].includes(boletoStatus);
+      const podeEnviarEmail = res.ok && res.vendaId && nfOk && boletoOk;
+      if (l.enviarEmail && !podeEnviarEmail) {
+        const motivos: string[] = [];
+        if (!res.ok) motivos.push("venda com erro");
+        if (l.emitirNF && !nfOk) motivos.push(`NF ${nfStatus || "não emitida"}`);
+        if (l.emitirBoleto && !boletoOk) motivos.push(`Boleto ${boletoStatus || "não emitido"}`);
+        toast.warning(`${l.nome}: e-mail NÃO enviado (${motivos.join(" · ")})`, { duration: 8000 });
+      }
+      if (podeEnviarEmail && l.enviarEmail) {
         const ccArr = ccPadrao
           .split(/[,;\s]+/)
           .map((s) => s.trim())

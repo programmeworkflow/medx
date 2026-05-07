@@ -328,8 +328,19 @@ export default function ContaAzulPanel() {
       if (j?.boleto?.status === "solicitado") partes.push("boleto gerado");
       else if (j?.boleto?.status === "erro") partes.push(`boleto erro: ${j.boleto.erro || "?"}`);
 
-      // Envia e-mail se solicitado
-      if (enviarEmail && j?.venda_id) {
+      // Envia e-mail SÓ se tudo deu certo — não manda se NF/boleto falharam
+      const nfStatus = j?.nf?.status || "";
+      const boletoStatus = j?.boleto?.status || "";
+      const nfOk = !emitirNF || ["emitida", "em_processamento", "aguardando_retorno"].includes(nfStatus);
+      const boletoOk = !emitirBoleto || ["emitido", "ja_emitido", "solicitado", "aguardando_confirmacao"].includes(boletoStatus);
+      const podeEnviar = nfOk && boletoOk;
+      if (enviarEmail && !podeEnviar) {
+        const motivos: string[] = [];
+        if (emitirNF && !nfOk) motivos.push(`NF ${nfStatus || "não emitida"}`);
+        if (emitirBoleto && !boletoOk) motivos.push(`Boleto ${boletoStatus || "não emitido"}`);
+        partes.push(`e-mail NÃO enviado (${motivos.join(" · ")})`);
+      }
+      if (enviarEmail && podeEnviar && j?.venda_id) {
         try {
           const dest = emailDestinatarios.split(",").map((s) => s.trim()).filter((s) => s.includes("@"));
           const re = await fetch(`${API_BASE}/api/contaazul/send-email-venda`, {
