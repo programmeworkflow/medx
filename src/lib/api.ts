@@ -101,8 +101,10 @@ export async function fetchFaturamentos(competenciaId: string) {
   return data;
 }
 
-export async function updateFaturamentoStatus(id: string, status: StatusFaturamento) {
-  const { error } = await supabase.from("faturamentos").update({ status }).eq("id", id);
+export async function updateFaturamentoStatus(id: string, status: StatusFaturamento, motivo?: string | null) {
+  const updates: any = { status };
+  if (motivo !== undefined) updates.erro_msg = motivo;
+  const { error } = await supabase.from("faturamentos").update(updates).eq("id", id);
   if (error) throw error;
 }
 

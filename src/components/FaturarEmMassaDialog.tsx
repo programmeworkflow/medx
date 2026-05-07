@@ -345,10 +345,18 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
       }
       setResultados((prev) => ({ ...prev, [l.faturamentoId]: res }));
       // Persiste status no banco — sucesso vira "concluido", falha vira "ca_error".
+      // Em caso de erro, salva o motivo (fatal | nf.erro | boleto.erro) pra debug futuro.
       try {
+        const motivo = res.ok
+          ? null
+          : (res as any).fatal
+            || res.nf?.erro
+            || res.boleto?.erro
+            || "erro desconhecido";
         await updateFaturamentoStatus(
           l.faturamentoId,
-          res.ok ? "concluido" : "ca_error"
+          res.ok ? "concluido" : "ca_error",
+          motivo ? String(motivo).slice(0, 500) : null
         );
       } catch (e) {
         console.error("Falha ao atualizar status do faturamento:", e);
