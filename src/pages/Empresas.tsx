@@ -263,7 +263,16 @@ export default function Empresas() {
     if (editingId) {
       updateMutation.mutate({ id: editingId, updates: payload });
     } else {
-      insertMutation.mutate(payload);
+      // Upsert: se CNPJ já existe, atualiza em vez de inserir (evita 409)
+      const existente = (empresas as any[]).find(
+        (e) => onlyDigits(e.cnpj) === cnpjLimpo
+      );
+      if (existente) {
+        updateMutation.mutate({ id: existente.id, updates: payload });
+        toast.info(`"${existente.nome_empresa}" já existia — atualizada com os novos dados.`, { duration: 5000 });
+      } else {
+        insertMutation.mutate(payload);
+      }
     }
   };
 
