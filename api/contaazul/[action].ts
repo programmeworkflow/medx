@@ -1135,6 +1135,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    if (action === "marcar-erros-ja-faturados") {
+      // Marca como "concluido" os faturamentos com ca_error que já têm
+      // venda no CA com mesmo CNPJ + mesmo valor.
+      const sb = supaAdmin();
+      const { data: erros } = await sb.from("faturamentos").select("*").eq("status", "ca_error");
+      const empIds = Array.from(new Set((erros || []).map((e: any) => e.empresa_executora_id).filter(Boolean)));
+      const { data: empresas } = await sb.from("empresas").select("id, cnpj").in("id", empIds);
+      const empById = new Map((empresas || []).map((e: any) => [e.id, e]));
+      const { data: vendasCA } = await sb
+        .from("contaazul_vendas")
+        .select("cnpj, valor, ca_venda_id");
+      const vendasPorCnpj = new Map<string, any[]>();
+      for (const v of vendasCA || []) {
+        const k = String(v.cnpj || "").replace(/\D/g, "");
+        if (!vendasPorCnpj.has(k)) vendasPorCnpj.set(k, []);
+        vendasPorCnpj.get(k)!.push(v);
+      }
+      let atualizados = 0;
+      for (const f of erros || []) {
+        const cnpj = String((f.cnpj_snapshot || empById.get(f.empresa_executora_id)?.cnpj || "")).replace(/\D/g, "");
+        const vendas = vendasPorCnpj.get(cnpj) || [];
+        const match = vendas.some((v: any) => Math.abs(Number(v.valor || 0) - Number(f.valor || 0)) < 0.01);
+        if (match) {
+          await sb.from("faturamentos").update({ status: "concluido" }).eq("id", f.id);
+          atualizados++;
+        }
+      }
+      return res.status(200).json({ ok: true, atualizados });
+    }
+
     if (action === "diagnostico-erros") {
       // Lista faturamentos com status ca_error e cruza com vendas do CA
       // pra ver se foram faturadas manualmente depois.
