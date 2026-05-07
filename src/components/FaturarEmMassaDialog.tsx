@@ -109,6 +109,14 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
   });
   const { data: empresas = [] } = useQuery({ queryKey: ["empresas"], queryFn: fetchEmpresas, enabled: open });
   const empresasById = useMemo(() => new Map(empresas.map((e: any) => [e.id, e])), [empresas]);
+  const empresasByCnpj = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const e of empresas as any[]) {
+      const k = String(e.cnpj || "").replace(/\D/g, "");
+      if (k) m.set(k, e);
+    }
+    return m;
+  }, [empresas]);
 
   const [servicoPadrao, setServicoPadrao] = useState<string>("");
   const [categoriaPadrao, setCategoriaPadrao] = useState<string>("");
@@ -177,8 +185,16 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
     const novas: Linha[] = (faturamentos as any[])
       .filter((f) => f.status === "pendente" || f.status === "sem_cadastro" || f.status === "ca_error")
       .map((f) => {
-        const empresa = empresasById.get(f.empresa_executora_id) as any;
-        const semCadastro = f.status === "sem_cadastro";
+        // Cruza primeiro por id; se não achar (ex: faturamento foi importado
+        // como sem_cadastro e empresa só foi cadastrada depois), tenta pelo CNPJ
+        // do snapshot. Assim o dialog reflete cadastros novos sem precisar de
+        // reconciliação no banco.
+        let empresa = empresasById.get(f.empresa_executora_id) as any;
+        if (!empresa) {
+          const k = String(f.cnpj_snapshot || "").replace(/\D/g, "");
+          if (k) empresa = empresasByCnpj.get(k);
+        }
+        const semCadastro = !empresa;
         // 1. Se já tem retencao_padrao configurada manualmente, usa essa.
         // 2. Senão deduz dos campos novos (retem_iss/ir/inss/pis_cofins_csll
         //    sincronizados da Receita Federal).
@@ -211,7 +227,7 @@ export default function FaturarEmMassaDialog({ centros: _centros }: { centros: C
         const errouAntes = f.status === "ca_error";
         return {
           faturamentoId: f.id,
-          empresaId: f.empresa_executora_id,
+          empresaId: empresa?.id || f.empresa_executora_id,
           cnpj: empresa?.cnpj ?? f.cnpj_snapshot ?? "",
           nome: empresa?.nome_empresa ?? f.nome_empresa_snapshot ?? "Sem nome",
           categoria: empresa?.categoria ?? "?",

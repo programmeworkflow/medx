@@ -70,6 +70,11 @@ export default function Faturamento() {
     enabled: !!compId,
   });
 
+  // Mantém empresas em cache pra disparar reconciliação automática quando o
+  // user cadastra uma empresa em outra aba e volta — assim o status sai de
+  // sem_cadastro sem precisar clicar em "Atualizar".
+  const { data: empresasCache = [] } = useQuery({ queryKey: ["empresas"], queryFn: fetchEmpresas });
+
   const currentComp = competencias.find(c => c.id === compId);
 
   const statusMutation = useMutation({
@@ -189,14 +194,16 @@ export default function Faturamento() {
 
   const handleRefresh = () => reconciliarSemCadastro(false);
 
-  // Auto-reconcilia quando a lista de faturamentos carrega/troca de competência
+  // Auto-reconcilia quando faturamentos/empresas carregam ou trocam.
+  // Inclui empresasCache.length nas deps pra disparar quando o usuário
+  // cadastra uma empresa em outra aba e volta pra cá.
   useEffect(() => {
     if (!faturamentos.length) return;
     const semCad = faturamentos.filter((f: any) => f.status === "sem_cadastro");
     if (semCad.length === 0) return;
     reconciliarSemCadastro(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [faturamentos.length, compId]);
+  }, [faturamentos.length, compId, empresasCache.length]);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
